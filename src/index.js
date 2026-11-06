@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const ffmpegPath = require('ffmpeg-static');
 const { randomUUID } = require('node:crypto');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
@@ -156,6 +157,112 @@ async function downloadDiscordMp3(attachment) {
 
 
 // ======================================
+// LIENS GOOGLE DRIVE (MP3 PUBLIC)
+// ======================================
+
+function extractGoogleDriveFileId(rawUrl) {
+  let url;
+
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error('Lien invalide. Colle un lien Google Drive valide.');
+  }
+
+  if (url.protocol !== 'https:' || url.hostname !== 'drive.google.com') {
+    throw new Error('Seuls les liens HTTPS de drive.google.com sont acceptés.');
+  }
+
+  let fileId = null;
+  const fileMatch = url.pathname.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (fileMatch) fileId = fileMatch[1];
+
+  if (!fileId) {
+    fileId = url.searchParams.get('id');
+  }
+
+  if (!fileId || !/^[a-zA-Z0-9_-]{10,}$/.test(fileId)) {
+    throw new Error('Impossible de reconnaître l’identifiant du fichier Google Drive.');
+  }
+
+  return fileId;
+}
+
+async function downloadGoogleDriveMp3(rawUrl) {
+  const fileId = extractGoogleDriveFileId(rawUrl);
+  const downloadUrl = `https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}`;
+
+  const response = await fetch(downloadUrl, {
+    redirect: 'follow',
+    signal: AbortSignal.timeout(45000)
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error('Google Drive n’a pas permis de télécharger ce fichier.');
+  }
+
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  if (contentType.includes('text/html') || contentType.includes('application/json')) {
+    await response.body.cancel().catch(() => {});
+    throw new Error(
+      'Google Drive renvoie une page de confirmation au lieu du MP3. Vérifie que le fichier est partagé en « Toute personne disposant du lien » et utilise un fichier de taille raisonnable.'
+    );
+  }
+
+  const declaredSize = Number(response.headers.get('content-length') || 0);
+  if (declaredSize > MAX_UPLOAD_BYTES) {
+    await response.body.cancel().catch(() => {});
+    throw new Error(`Le MP3 dépasse la limite interne du bot (${MAX_UPLOAD_MB} Mo).`);
+  }
+
+  const filePath = path.join(
+    UPLOAD_DIR,
+    `${Date.now()}-${randomUUID()}-google-drive.mp3`
+  );
+
+  let received = 0;
+  const source = Readable.fromWeb(response.body);
+
+  source.on('data', chunk => {
+    received += chunk.length;
+    if (received > MAX_UPLOAD_BYTES) {
+      source.destroy(new Error(`Le MP3 dépasse la limite interne du bot (${MAX_UPLOAD_MB} Mo).`));
+    }
+  });
+
+  try {
+    await pipeline(source, fs.createWriteStream(filePath, { flags: 'wx' }));
+  } catch (error) {
+    await fsp.unlink(filePath).catch(() => {});
+    if (error.name === 'AbortError' || error.name === 'TimeoutError') {
+      throw new Error('Le téléchargement Google Drive a expiré. Réessaie avec un fichier plus petit.');
+    }
+    throw error;
+  }
+
+  if (received < 128) {
+    await fsp.unlink(filePath).catch(() => {});
+    throw new Error('Le fichier téléchargé est vide ou ne semble pas être un MP3.');
+  }
+
+  // Vérification simple de la signature MP3/ID3 pour éviter de lire une page HTML renommée.
+  const handle = await fsp.open(filePath, 'r');
+  const header = Buffer.alloc(3);
+  await handle.read(header, 0, 3, 0);
+  await handle.close();
+
+  const hasId3 = header.toString('ascii') === 'ID3';
+  const hasMpegFrame = header[0] === 0xFF && (header[1] & 0xE0) === 0xE0;
+  if (!hasId3 && !hasMpegFrame) {
+    await fsp.unlink(filePath).catch(() => {});
+    throw new Error('Le lien ne semble pas pointer vers un véritable fichier MP3.');
+  }
+
+  return filePath;
+}
+
+
+// ======================================
 // NETTOYAGE DES FICHIERS
 // ======================================
 
@@ -255,7 +362,7 @@ function startTrack(guildId) {
 
   console.log('🎵 Lecture :', track.name);
 
-  const ffmpeg = spawn('ffmpeg', [
+  const ffmpeg = spawn(ffmpegPath || 'ffmpeg', [
     '-hide_banner',
     '-loglevel', 'error',
     '-i', track.file,
@@ -365,19 +472,44 @@ client.on(Events.InteractionCreate, async interaction => {
     if (command === 'play') {
       const attachment = interaction.options.getAttachment('fichier');
       const localName = interaction.options.getString('nom');
+      const rawUrl = interaction.options.getString('url');
+      const suppliedSources = [attachment, localName, rawUrl].filter(Boolean).length;
 
-      if (!attachment && !localName) {
+      if (suppliedSources === 0) {
         return interaction.reply({
-          content: '❌ Ajoute un MP3 avec fichier ou indique un nom.',
+          content: '❌ Ajoute un MP3, indique un nom de fichier local ou fournis un lien Google Drive.',
           ephemeral: true
         });
       }
 
-      if (attachment && localName) {
+      if (suppliedSources > 1) {
         return interaction.reply({
-          content: '❌ Choisis soit un fichier, soit un nom.',
+          content: '❌ Choisis une seule source : fichier, nom ou URL.',
           ephemeral: true
         });
+      }
+
+      if (rawUrl) {
+        let parsedUrl;
+        try {
+          parsedUrl = new URL(rawUrl);
+        } catch {
+          return interaction.reply({ content: '❌ URL invalide.', ephemeral: true });
+        }
+
+        if (parsedUrl.hostname === 'open.spotify.com' || parsedUrl.hostname === 'spotify.com') {
+          return interaction.reply({
+            content: '🎧 Les liens Spotify ne peuvent pas être diffusés directement par le bot. Spotify autorise l’accès aux informations du morceau, mais pas l’extraction de son flux audio.\n\nPour lancer une musique avec MCT MUSIC, utilisez un MP3 local, un fichier joint ou un lien Google Drive public.',
+            ephemeral: true
+          });
+        }
+
+        if (parsedUrl.hostname !== 'drive.google.com') {
+          return interaction.reply({
+            content: '❌ Pour la lecture par URL, utilisez un lien Google Drive public vers un fichier MP3.',
+            ephemeral: true
+          });
+        }
       }
 
       await interaction.deferReply();
@@ -401,6 +533,17 @@ client.on(Events.InteractionCreate, async interaction => {
 
           newTrack = {
             name: path.parse(attachment.name).name,
+            file: filePath,
+            ffmpeg: null,
+            deleteOnFinish: true,
+            deleteScheduled: false
+          };
+
+        } else if (rawUrl) {
+          const filePath = await downloadGoogleDriveMp3(rawUrl);
+
+          newTrack = {
+            name: 'Musique Google Drive',
             file: filePath,
             ffmpeg: null,
             deleteOnFinish: true,
@@ -590,6 +733,8 @@ client.once(Events.ClientReady, readyClient => {
   console.log(`🎵 MCT MUSIC connecté : ${readyClient.user.tag}`);
   console.log('✅ Lecture MP3 locale activée');
   console.log('✅ Lecture des MP3 joints aux commandes /play activée');
+  console.log('✅ Lecture des MP3 publics Google Drive activée');
+  console.log('ℹ️ Les liens Spotify sont reconnus, mais leur audio n’est pas diffusé.');
   console.log('================================');
 });
 

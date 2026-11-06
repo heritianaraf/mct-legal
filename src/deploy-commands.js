@@ -22,6 +22,12 @@ const commands = [
         .setName('nom')
         .setDescription('Nom du MP3 présent dans le dossier music')
         .setRequired(false)
+    )
+    .addStringOption(option =>
+      option
+        .setName('url')
+        .setDescription('Lien public Google Drive vers un MP3 (pas Spotify)')
+        .setRequired(false)
     ),
 
   // PAUSE
@@ -85,6 +91,7 @@ async function main() {
   console.log('✅ Commandes MCT MUSIC enregistrées');
   console.log('🎵 /play fichier');
   console.log('🎵 /play nom');
+  console.log('🔗 /play url (Google Drive)');
   console.log('⏭️ /skip');
   console.log('📋 /queue');
   console.log('================================');
