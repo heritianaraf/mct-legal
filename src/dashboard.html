@@ -5,31 +5,174 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MCT MUSIC</title>
 <style>
-:root{--bg:#f3f1ec;--card:#fffdf8;--tx:#1d1b18;--mut:#79736a;--ac:#d4451f;--bd:#e3ded3;--ok:#2f7d4f}
-@media(prefers-color-scheme:dark){:root{--bg:#15130f;--card:#201d18;--tx:#f1ece2;--mut:#9a9387;--ac:#ff6a3d;--bd:#34302a;--ok:#5fc48a}}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.5 Georgia,"Times New Roman",serif;min-height:100vh}
-main{max-width:720px;margin:0 auto;padding:24px 16px 64px}
-h1{font-size:2rem;letter-spacing:.14em;margin:0 0 4px}
-h1 span{color:var(--ac)}
-h2{font:600 .75rem/1 system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--mut);margin:0 0 12px}
-.sub{color:var(--mut);margin:0 0 24px;font-style:italic}
-.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:16px}
-.row{display:flex;gap:8px;flex-wrap:wrap}
-.row>*{flex:1 1 140px}
-select,input[type=text],input[type=password]{width:100%;padding:10px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--tx);font:inherit}
-button,.file{padding:10px 14px;border:1px solid var(--tx);border-radius:6px;background:var(--tx);color:var(--bg);font:600 .9rem system-ui,sans-serif;cursor:pointer;text-align:center}
-button.ghost,.file{background:transparent;color:var(--tx)}
-button.main{background:var(--ac);border-color:var(--ac);color:#fff}
-button:hover,.file:hover{opacity:.85}
-.now{font-size:1.4rem;margin:0 0 12px;word-break:break-word}
-ol{margin:0;padding-left:22px}
-li{padding:2px 0;word-break:break-word}
-.empty{color:var(--mut);font-style:italic}
-#msg{white-space:pre-line;min-height:1.4em;margin:0 0 16px;color:var(--ok);font:.9rem system-ui,sans-serif}
-#msg.err,#lerr{color:var(--ac)}
-#login{max-width:360px;margin:15vh auto 0}
-.stack{display:grid;gap:10px}
+:root {
+    --bg: #f3f1ec;
+    --card: #fffdf8;
+    --tx: #1d1b18;
+    --mut: #79736a;
+    --ac: #d4451f;
+    --bd: #e3ded3;
+    --ok: #2f7d4f;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #15130f;
+        --card: #201d18;
+        --tx: #f1ece2;
+        --mut: #9a9387;
+        --ac: #ff6a3d;
+        --bd: #34302a;
+        --ok: #5fc48a;
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--tx);
+    font: 16px/1.5 Georgia, "Times New Roman", serif;
+    min-height: 100vh;
+}
+
+main {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 24px 16px 64px;
+}
+
+h1 {
+    font-size: 2rem;
+    letter-spacing: .14em;
+    margin: 0 0 4px;
+    text-align: center;
+}
+
+h1 span {
+    color: var(--ac);
+}
+
+h2 {
+    font: 600 .75rem/1 system-ui, sans-serif;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--mut);
+    margin: 0 0 12px;
+}
+
+.sub {
+    color: var(--mut);
+    margin: 0 0 24px;
+    font-style: italic;
+}
+
+.card {
+    background: var(--card);
+    border: 1px solid var(--bd);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.row > * {
+    flex: 1 1 140px;
+}
+
+select,
+input[type="text"],
+input[type="password"] {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid var(--bd);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--tx);
+    font: inherit;
+}
+
+button,
+.file {
+    padding: 10px 14px;
+    border: 1px solid var(--tx);
+    border-radius: 6px;
+    background: var(--tx);
+    color: var(--bg);
+    font: 600 .9rem system-ui, sans-serif;
+    cursor: pointer;
+    text-align: center;
+}
+
+button.ghost,
+.file {
+    background: transparent;
+    color: var(--tx);
+}
+
+button.main {
+    background: var(--ac);
+    border-color: var(--ac);
+    color: #fff;
+}
+
+button:hover,
+.file:hover {
+    opacity: .85;
+}
+
+.now {
+    font-size: 1.4rem;
+    margin: 0 0 12px;
+    word-break: break-word;
+}
+
+ol {
+    margin: 0;
+    padding-left: 22px;
+}
+
+li {
+    padding: 2px 0;
+    word-break: break-word;
+}
+
+.empty {
+    color: var(--mut);
+    font-style: italic;
+}
+
+#msg {
+    white-space: pre-line;
+    min-height: 1.4em;
+    margin: 0 0 16px;
+    color: var(--ok);
+    font: .9rem system-ui, sans-serif;
+}
+
+#msg.err,
+#lerr {
+    color: var(--ac);
+}
+
+#login {
+    max-width: 360px;
+    margin: 15vh auto 0;
+}
+
+.stack {
+    display: grid;
+    gap: 10px;
+}
+
 .login-logo {
     display: block;
     width: 180px;
@@ -37,25 +180,41 @@ li{padding:2px 0;word-break:break-word}
     object-fit: contain;
     margin: 0 auto 10px;
 }
-input[type=file]{display:none}
-[hidden]{display:none!important}
+
+input[type="file"] {
+    display: none;
+}
+
+[hidden] {
+    display: none !important;
+}
 </style>
 </head>
+
 <body>
 <main>
-  <form id="login" class="card stack">
-    <img src="assets/logo_mct.jpg"
-     alt="MCT Music Player"
-     class="login-logo">
 
-    <h1>MCT<span>·</span>MUSIC<span>·</span>PLAYER</h1>
+    <form id="login" class="card stack">
 
-    <input id="pw" type="password" placeholder="Mot de passe" autocomplete="current-password" required>
+        <img src="./assets/logo_mct.jpg" alt="Logo MCT Music Player" class="login-logo">
 
-    <button class="main">Se connecter</button>
+        <h1>MCT<span>·</span>MUSIC<span>·</span>PLAYER</h1>
 
-    <div id="lerr" class="sub"></div>
-</form>
+        <input
+            id="pw"
+            type="password"
+            placeholder="Mot de passe"
+            autocomplete="current-password"
+            required
+        >
+
+        <button type="submit" class="main">
+            Se connecter
+        </button>
+
+        <div id="lerr" class="sub" role="alert"></div>
+
+    </form>
 
   <div id="app" hidden>
     <h1>MCT<span>·</span>MUSIC</h1>
