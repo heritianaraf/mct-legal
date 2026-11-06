@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 
 const {
@@ -10,23 +11,29 @@ const commands = [
   // PLAY
   new SlashCommandBuilder()
     .setName('play')
-    .setDescription('Lire une musique MP3')
+    .setDescription('Lire une musique')
     .addAttachmentOption(option =>
       option
         .setName('fichier')
-        .setDescription('Choisir un MP3 depuis votre ordinateur (limite Discord)')
+        .setDescription('MP3 depuis votre ordinateur')
         .setRequired(false)
     )
     .addStringOption(option =>
       option
         .setName('nom')
-        .setDescription('Nom du MP3 présent dans le dossier music')
+        .setDescription('Nom du MP3 dans le dossier music')
         .setRequired(false)
     )
     .addStringOption(option =>
       option
         .setName('url')
-        .setDescription('Lien public Google Drive vers un MP3 (pas Spotify)')
+        .setDescription('Lien Google Drive vers un MP3')
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option
+        .setName('spotify')
+        .setDescription('Lien Spotify d’un morceau (retrouvé dans tes MP3)')
         .setRequired(false)
     ),
 
@@ -45,7 +52,7 @@ const commands = [
     .setName('stop')
     .setDescription('Arrêter la musique et vider la file'),
 
-  // SKIP
+  // NEXT
   new SlashCommandBuilder()
     .setName('skip')
     .setDescription('Passer à la musique suivante'),
@@ -75,7 +82,7 @@ async function main() {
 
   if (!DISCORD_TOKEN || !CLIENT_ID || !GUILD_ID) {
     throw new Error(
-      '❌ Vérifie DISCORD_TOKEN, CLIENT_ID et GUILD_ID dans .env'
+      'Vérifie DISCORD_TOKEN, CLIENT_ID et GUILD_ID dans .env'
     );
   }
 
@@ -88,15 +95,14 @@ async function main() {
   );
 
   console.log('================================');
-  console.log('✅ Commandes MCT MUSIC enregistrées');
-  console.log('🎵 /play fichier');
-  console.log('🎵 /play nom');
-  console.log('🔗 /play url (Google Drive)');
-  console.log('⏭️ /skip');
-  console.log('📋 /queue');
+  console.log('MCT MUSIC : commandes enregistrées');
+  console.log('/play fichier');
+  console.log('/play nom');
+  console.log('/play url');
+  console.log('/play spotify');
+  console.log('/pause /resume /stop');
+  console.log('/skip /queue /list');
   console.log('================================');
 }
 
-main().catch(error => {
-  console.error('❌ Erreur enregistrement :', error);
-});
+main().catch(console.error);

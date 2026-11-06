@@ -9,21 +9,10 @@ const { randomUUID } = require('node:crypto');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 
-const { Client, GatewayIntentBits, Events } = require('discord.js');
-const http = require('http');
+const { Client, GatewayIntentBits, Events, MessageFlags } = require('discord.js');
 
-const PORT = process.env.PORT || 10000;
-
-const server = http.createServer((req, res) => {
-    res.writeHead(200, {
-        'Content-Type': 'text/plain'
-    });
-    res.end('MCT MUSIC is online!');
-});
-
-server.listen(PORT, '0.0.0.0', () => {
-    console.log(`MCT MUSIC HTTP server running on port ${PORT}`);
-});
+const { startWeb } = require('./web');
+const { resolveSpotify } = require('./spotify');
 
 const {
   joinVoiceChannel,
@@ -389,7 +378,7 @@ function startTrack(guildId) {
       cleanupTrack(track);
       state.current = null;
 
-      state.textChannel.send(
+      state.textChannel?.send(
         '❌ Impossible de lire ce MP3. Vérifie FFmpeg.'
       ).catch(() => {});
 
@@ -414,7 +403,7 @@ function startTrack(guildId) {
 
   state.player.play(resource);
 
-  state.textChannel.send(
+  state.textChannel?.send(
     `🎵 Lecture en cours : **${track.name}**`
   ).catch(() => {});
 }
@@ -423,9 +412,7 @@ function startTrack(guildId) {
 // CONNEXION AU SALON VOCAL
 // ======================================
 
-async function connectVoice(interaction, state) {
-  const voiceChannel = interaction.member.voice?.channel;
-
+async function ensureVoice(guild, voiceChannel, state) {
   if (!voiceChannel) {
     throw new Error('Rejoins un salon vocal avant de lancer la musique.');
   }
@@ -436,25 +423,222 @@ async function connectVoice(interaction, state) {
   ) {
     state.connection = joinVoiceChannel({
       channelId: voiceChannel.id,
-      guildId: interaction.guildId,
-      adapterCreator: interaction.guild.voiceAdapterCreator,
+      guildId: guild.id,
+      adapterCreator: guild.voiceAdapterCreator,
       selfDeaf: true
     });
 
     state.connection.subscribe(state.player);
 
-    await entersState(
-      state.connection,
-      VoiceConnectionStatus.Ready,
-      20000
-    );
-
-  } else if (
-    state.connection.joinConfig.channelId !== voiceChannel.id
-  ) {
+    await entersState(state.connection, VoiceConnectionStatus.Ready, 20000);
+  } else if (state.connection.joinConfig.channelId !== voiceChannel.id) {
     throw new Error('MCT MUSIC est déjà connecté à un autre salon vocal.');
   }
 }
+
+function connectVoice(interaction, state) {
+  return ensureVoice(interaction.guild, interaction.member.voice?.channel, state);
+}
+
+// ======================================
+// SPOTIFY : retrouve le titre dans les MP3 locaux
+// ======================================
+
+const norm = value => String(value)
+  .toLowerCase()
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .trim();
+
+function findMusicBySpotify({ title, artist }) {
+  const wanted = norm(title.replace(/\(.*?\)/g, '').replace(/\s[-–].*$/, ''));
+  if (!wanted) return null;
+
+  const files = getMusicFiles().map(file => ({ file, name: norm(path.parse(file).name) }));
+  const by = artist ? norm(artist) : '';
+
+  const match =
+    files.find(f => f.name === wanted) ||
+    files.find(f => f.name.includes(wanted) && (!by || f.name.includes(by))) ||
+    files.find(f => f.name.includes(wanted));
+
+  return match ? match.file : null;
+}
+
+async function enqueueSpotify(state, rawUrl) {
+  const { label, tracks } = await resolveSpotify(rawUrl);
+  const added = [];
+  const missing = [];
+
+  for (const track of tracks) {
+    const display = track.artist ? `${track.artist} - ${track.title}` : track.title;
+    const file = findMusicBySpotify(track);
+
+    if (!file) {
+      missing.push(display);
+      continue;
+    }
+
+    state.items.push({
+      name: path.parse(file).name,
+      file: path.join(MUSIC_DIR, file),
+      ffmpeg: null,
+      deleteOnFinish: false
+    });
+    added.push(display);
+  }
+
+  return { label, added, missing };
+}
+
+function spotifyReport({ label, added, missing }) {
+  if (added.length) {
+    return `🎧 **${label}** trouvé dans ta bibliothèque MP3 et ajouté à la file.`;
+  }
+
+  return `🎧 **${missing[0] || label}** : aucun MP3 correspondant dans le dossier music.\n` +
+    'Spotify ne fournit pas l’audio : ajoute le MP3 (nommé avec le titre du morceau) puis relance la commande.';
+}
+
+// ======================================
+// ARRÊT / API POUR L'INTERFACE WEB
+// ======================================
+
+function stopGuild(guildId) {
+  const state = queues.get(guildId);
+  if (!state) return;
+
+  queues.delete(guildId);
+
+  for (const track of state.items) {
+    cleanupTrack(track);
+  }
+
+  state.items = [];
+  cleanupTrack(state.current);
+  state.current = null;
+  state.player.stop(true);
+  state.connection?.destroy();
+}
+
+async function webEnqueue(guildId, channelId, add) {
+  const guild = client.guilds.cache.get(String(guildId));
+  const channel = guild?.channels.cache.get(String(channelId));
+
+  if (!guild || !channel?.isVoiceBased()) {
+    throw new Error('Serveur ou salon vocal introuvable.');
+  }
+
+  let state = queues.get(guild.id);
+  if (!state) {
+    state = createMusicState(guild.id, null);
+    queues.set(guild.id, state);
+  }
+
+  try {
+    await ensureVoice(guild, channel, state);
+    const message = await add(state);
+    startTrack(guild.id);
+    return message;
+  } finally {
+    if (!state.current && state.items.length === 0) {
+      stopGuild(guild.id);
+    }
+  }
+}
+
+const botApi = {
+  library: getMusicFiles,
+
+  getState() {
+    return client.guilds.cache.map(guild => {
+      const state = queues.get(guild.id);
+      const status = state?.player.state.status;
+
+      return {
+        id: guild.id,
+        name: guild.name,
+        channels: guild.channels.cache
+          .filter(channel => channel.isVoiceBased())
+          .map(channel => ({ id: channel.id, name: channel.name })),
+        channelId: state?.connection?.joinConfig?.channelId || null,
+        current: state?.current?.name || null,
+        paused: status === AudioPlayerStatus.Paused || status === AudioPlayerStatus.AutoPaused,
+        queue: state ? state.items.map(track => track.name) : []
+      };
+    });
+  },
+
+  play(guildId, channelId, source, value) {
+    return webEnqueue(guildId, channelId, async state => {
+      if (source === 'local') {
+        const file = findMusic(String(value || ''));
+        if (!file) throw new Error('MP3 introuvable.');
+
+        state.items.push({
+          name: path.parse(file).name,
+          file: path.join(MUSIC_DIR, file),
+          ffmpeg: null,
+          deleteOnFinish: false
+        });
+        return `🎶 ${path.parse(file).name} ajouté à la file.`;
+      }
+
+      if (source === 'spotify') {
+        return spotifyReport(await enqueueSpotify(state, String(value || '')))
+          .replace(/\*\*/g, '');
+      }
+
+      throw new Error('Source inconnue.');
+    });
+  },
+
+  upload(guildId, channelId, name, stream) {
+    return webEnqueue(guildId, channelId, async state => {
+      if (!/\.mp3$/i.test(name)) throw new Error('Le fichier doit être au format MP3.');
+
+      const safeName = path.parse(name).name.replace(/[^a-zA-Z0-9 _-]/g, '_').slice(0, 70) || 'musique';
+      const filePath = path.join(UPLOAD_DIR, `${Date.now()}-${randomUUID()}-${safeName}.mp3`);
+      let received = 0;
+
+      stream.on('data', chunk => {
+        received += chunk.length;
+        if (received > MAX_UPLOAD_BYTES) {
+          stream.destroy(Object.assign(new Error(`Fichier trop volumineux (max ${MAX_UPLOAD_MB} Mo).`), { status: 413 }));
+        }
+      });
+
+      try {
+        await pipeline(stream, fs.createWriteStream(filePath, { flags: 'wx' }));
+      } catch (error) {
+        await fsp.unlink(filePath).catch(() => {});
+        throw error;
+      }
+
+      if (received === 0) {
+        await fsp.unlink(filePath).catch(() => {});
+        throw new Error('Le fichier MP3 est vide.');
+      }
+
+      state.items.push({ name: safeName, file: filePath, ffmpeg: null, deleteOnFinish: true, deleteScheduled: false });
+      return `🎶 ${safeName} ajouté à la file.`;
+    });
+  },
+
+  async control(guildId, action) {
+    const state = queues.get(String(guildId));
+    if (!state) throw new Error('Aucune lecture sur ce serveur.');
+
+    if (action === 'pause') state.player.pause();
+    else if (action === 'resume') state.player.unpause();
+    else if (action === 'skip') state.player.stop(true);
+    else if (action === 'stop') stopGuild(String(guildId));
+    else throw new Error('Action inconnue.');
+  }
+};
+
+startWeb(botApi);
 
 // ======================================
 // COMMANDES DISCORD
@@ -473,18 +657,19 @@ client.on(Events.InteractionCreate, async interaction => {
       const attachment = interaction.options.getAttachment('fichier');
       const localName = interaction.options.getString('nom');
       const rawUrl = interaction.options.getString('url');
-      const suppliedSources = [attachment, localName, rawUrl].filter(Boolean).length;
+      const spotifyUrl = interaction.options.getString('spotify');
+      const suppliedSources = [attachment, localName, rawUrl, spotifyUrl].filter(Boolean).length;
 
       if (suppliedSources === 0) {
         return interaction.reply({
-          content: '❌ Ajoute un MP3, indique un nom de fichier local ou fournis un lien Google Drive.',
+          content: '❌ Ajoute un MP3, un nom de fichier local, un lien Google Drive ou un lien Spotify.',
           ephemeral: true
         });
       }
 
       if (suppliedSources > 1) {
         return interaction.reply({
-          content: '❌ Choisis une seule source : fichier, nom ou URL.',
+          content: '❌ Choisis une seule source : fichier, nom, URL ou Spotify.',
           ephemeral: true
         });
       }
@@ -499,7 +684,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         if (parsedUrl.hostname === 'open.spotify.com' || parsedUrl.hostname === 'spotify.com') {
           return interaction.reply({
-            content: '🎧 Les liens Spotify ne peuvent pas être diffusés directement par le bot. Spotify autorise l’accès aux informations du morceau, mais pas l’extraction de son flux audio.\n\nPour lancer une musique avec MCT MUSIC, utilisez un MP3 local, un fichier joint ou un lien Google Drive public.',
+            content: '🎧 Pour un lien Spotify, utilise l’option **spotify** de /play.',
             ephemeral: true
           });
         }
@@ -538,6 +723,17 @@ client.on(Events.InteractionCreate, async interaction => {
             deleteOnFinish: true,
             deleteScheduled: false
           };
+
+        } else if (spotifyUrl) {
+          const result = await enqueueSpotify(state, spotifyUrl);
+
+          if (!result.added.length && !state.current) {
+            stopGuild(guildId);
+          }
+
+          await interaction.editReply(spotifyReport(result));
+          startTrack(guildId);
+          return;
 
         } else if (rawUrl) {
           const filePath = await downloadGoogleDriveMp3(rawUrl);
@@ -606,7 +802,7 @@ client.on(Events.InteractionCreate, async interaction => {
       });
     }
 
-    // SKIP
+    // NEXT
     else if (command === 'skip') {
       const state = queues.get(guildId);
 
@@ -682,26 +878,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // STOP
     else if (command === 'stop') {
-      const state = queues.get(guildId);
-
-      if (state) {
-        queues.delete(guildId);
-
-        for (const track of state.items) {
-          cleanupTrack(track);
-        }
-
-        state.items = [];
-
-        cleanupTrack(state.current);
-        state.current = null;
-
-        state.player.stop(true);
-
-        if (state.connection) {
-          state.connection.destroy();
-        }
-      }
+      stopGuild(guildId);
 
       return interaction.reply(
         '⏹️ Lecture arrêtée. File vidée et bot déconnecté.'
@@ -734,7 +911,7 @@ client.once(Events.ClientReady, readyClient => {
   console.log('✅ Lecture MP3 locale activée');
   console.log('✅ Lecture des MP3 joints aux commandes /play activée');
   console.log('✅ Lecture des MP3 publics Google Drive activée');
-  console.log('ℹ️ Les liens Spotify sont reconnus, mais leur audio n’est pas diffusé.');
+  console.log('✅ Liens Spotify : retrouvés dans les MP3 locaux (titre du morceau)');
   console.log('================================');
 });
 

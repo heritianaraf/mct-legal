@@ -1,0 +1,141 @@
+const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+
+function startWeb(bot) {
+  const PORT = process.env.PORT || 10000;
+  const PASSWORD = process.env.WEB_PASSWORD || '';
+  const sessions = new Map();
+  const attempts = new Map();
+
+  const fail = (message, status = 400) => Object.assign(new Error(message), { status });
+
+  const send = (res, code, data, headers = {}) => {
+    res.writeHead(code, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      ...headers
+    });
+    res.end(JSON.stringify(data));
+  };
+
+  const sameSecret = (a, b) => {
+    const hash = value => crypto.createHash('sha256').update(value).digest();
+    return crypto.timingSafeEqual(hash(a), hash(b));
+  };
+
+  const isAuthed = req => {
+    const token = (req.headers.cookie || '').match(/(?:^|;\s*)mct=([a-f0-9]{64})/)?.[1];
+    const expires = token && sessions.get(token);
+    if (!expires) return false;
+    if (expires < Date.now()) {
+      sessions.delete(token);
+      return false;
+    }
+    return true;
+  };
+
+  const readJson = req => new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > 10000) {
+        reject(fail('Requête trop grande.', 413));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString() || '{}'));
+      } catch {
+        reject(fail('JSON invalide.'));
+      }
+    });
+    req.on('error', reject);
+  });
+
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+
+    try {
+      if (req.method === 'GET' && url.pathname === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        return res.end(fs.readFileSync(path.join(__dirname, 'dashboard.html')));
+      }
+
+      if (!url.pathname.startsWith('/api/')) {
+        res.writeHead(404);
+        return res.end('Not found');
+      }
+
+      if (!PASSWORD) {
+        throw fail('Définis WEB_PASSWORD dans .env pour activer l’interface web.', 503);
+      }
+
+      if (url.pathname === '/api/login' && req.method === 'POST') {
+        const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress).split(',')[0].trim();
+        const entry = attempts.get(ip);
+        if (entry && entry.reset > Date.now() && entry.count >= 10) {
+          throw fail('Trop de tentatives, réessaie dans quelques minutes.', 429);
+        }
+
+        const { password } = await readJson(req);
+        if (typeof password !== 'string' || !sameSecret(password, PASSWORD)) {
+          attempts.set(ip, {
+            count: (entry && entry.reset > Date.now() ? entry.count : 0) + 1,
+            reset: entry && entry.reset > Date.now() ? entry.reset : Date.now() + 600000
+          });
+          throw fail('Mot de passe incorrect.', 401);
+        }
+
+        const token = crypto.randomBytes(32).toString('hex');
+        sessions.set(token, Date.now() + 12 * 3600 * 1000);
+        const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
+        return send(res, 200, { ok: true }, {
+          'Set-Cookie': `mct=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${secure}`
+        });
+      }
+
+      if (!isAuthed(req)) throw fail('Non connecté.', 401);
+
+      if (url.pathname === '/api/state' && req.method === 'GET') {
+        return send(res, 200, { guilds: bot.getState(), library: bot.library() });
+      }
+
+      if (url.pathname === '/api/play' && req.method === 'POST') {
+        const { guildId, channelId, source, value } = await readJson(req);
+        return send(res, 200, { message: await bot.play(guildId, channelId, source, value) });
+      }
+
+      if (url.pathname === '/api/control' && req.method === 'POST') {
+        const { guildId, action } = await readJson(req);
+        await bot.control(guildId, action);
+        return send(res, 200, { ok: true });
+      }
+
+      if (url.pathname === '/api/upload' && req.method === 'PUT') {
+        const message = await bot.upload(
+          url.searchParams.get('guildId'),
+          url.searchParams.get('channelId'),
+          url.searchParams.get('name') || 'musique.mp3',
+          req
+        );
+        return send(res, 200, { message });
+      }
+
+      throw fail('Route inconnue.', 404);
+    } catch (error) {
+      if (!res.headersSent) send(res, error.status || 400, { error: error.message });
+    }
+  });
+
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`MCT MUSIC interface web sur le port ${PORT}`);
+  });
+}
+
+module.exports = { startWeb };

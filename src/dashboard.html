@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCT MUSIC</title>
+<style>
+:root{--bg:#f3f1ec;--card:#fffdf8;--tx:#1d1b18;--mut:#79736a;--ac:#d4451f;--bd:#e3ded3;--ok:#2f7d4f}
+@media(prefers-color-scheme:dark){:root{--bg:#15130f;--card:#201d18;--tx:#f1ece2;--mut:#9a9387;--ac:#ff6a3d;--bd:#34302a;--ok:#5fc48a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.5 Georgia,"Times New Roman",serif;min-height:100vh}
+main{max-width:720px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:2rem;letter-spacing:.14em;margin:0 0 4px}
+h1 span{color:var(--ac)}
+h2{font:600 .75rem/1 system-ui,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--mut);margin:0 0 12px}
+.sub{color:var(--mut);margin:0 0 24px;font-style:italic}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:16px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row>*{flex:1 1 140px}
+select,input[type=text],input[type=password]{width:100%;padding:10px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--tx);font:inherit}
+button,.file{padding:10px 14px;border:1px solid var(--tx);border-radius:6px;background:var(--tx);color:var(--bg);font:600 .9rem system-ui,sans-serif;cursor:pointer;text-align:center}
+button.ghost,.file{background:transparent;color:var(--tx)}
+button.main{background:var(--ac);border-color:var(--ac);color:#fff}
+button:hover,.file:hover{opacity:.85}
+.now{font-size:1.4rem;margin:0 0 12px;word-break:break-word}
+ol{margin:0;padding-left:22px}
+li{padding:2px 0;word-break:break-word}
+.empty{color:var(--mut);font-style:italic}
+#msg{min-height:1.4em;margin:0 0 16px;color:var(--ok);font:.9rem system-ui,sans-serif}
+#msg.err,#lerr{color:var(--ac)}
+#login{max-width:360px;margin:15vh auto 0}
+.stack{display:grid;gap:10px}
+input[type=file]{display:none}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <form id="login" class="card stack">
+    <h1>MCT<span>·</span>MUSIC</h1>
+    <input id="pw" type="password" placeholder="Mot de passe" autocomplete="current-password" required>
+    <button class="main">Se connecter</button>
+    <div id="lerr" class="sub"></div>
+  </form>
+
+  <div id="app" hidden>
+    <h1>MCT<span>·</span>MUSIC</h1>
+    <p class="sub">Pilote le bot depuis ton navigateur.</p>
+
+    <div class="card">
+      <h2>Destination</h2>
+      <div class="row">
+        <select id="guild" aria-label="Serveur"></select>
+        <select id="channel" aria-label="Salon vocal"></select>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>En cours</h2>
+      <p class="now" id="now">Rien en lecture</p>
+      <div class="row">
+        <button id="pause" class="ghost">⏸ Pause</button>
+        <button id="resume" class="ghost">▶ Reprendre</button>
+        <button id="skip" class="ghost">⏭ Suivant</button>
+        <button id="stop" class="ghost">⏹ Arrêter</button>
+      </div>
+    </div>
+
+    <p id="msg"></p>
+
+    <div class="card">
+      <h2>Ajouter une musique</h2>
+      <div class="stack">
+        <div class="row">
+          <select id="track" aria-label="MP3 local"></select>
+          <button id="add" class="main">Ajouter</button>
+        </div>
+        <div class="row">
+          <input id="spurl" type="text" placeholder="Lien Spotify d’un morceau">
+          <button id="sp" class="main">Chercher</button>
+        </div>
+        <label class="file">Envoyer un MP3 depuis mon ordinateur<input id="file" type="file" accept=".mp3,audio/mpeg"></label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>File d’attente</h2>
+      <ol id="queue"></ol>
+      <p id="qempty" class="empty">La file est vide.</p>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let data = { guilds: [], library: [] };
+
+async function api(url, opts = {}) {
+  const res = await fetch(url, opts);
+  const json = await res.json().catch(() => ({}));
+  if (res.status === 401 && url !== '/api/login') {
+    show(false);
+    throw new Error('Session expirée.');
+  }
+  if (!res.ok) throw new Error(json.error || 'Erreur');
+  return json;
+}
+
+const post = obj => ({
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(obj)
+});
+
+function show(on) {
+  $('login').hidden = on;
+  $('app').hidden = !on;
+}
+
+function msg(text, isErr) {
+  $('msg').textContent = text || '';
+  $('msg').className = isErr ? 'err' : '';
+}
+
+function fill(select, items) {
+  const sig = JSON.stringify(items);
+  if (select.dataset.sig === sig) return;
+  const previous = select.value;
+  select.dataset.sig = sig;
+  select.replaceChildren(...items.map(([value, label]) => new Option(label, value)));
+  if (items.some(item => item[0] === previous)) select.value = previous;
+}
+
+function render() {
+  fill($('guild'), data.guilds.map(g => [g.id, g.name]));
+  const g = data.guilds.find(x => x.id === $('guild').value);
+
+  fill($('channel'), (g?.channels || []).map(c => [c.id, c.name]));
+  if (g?.channelId) $('channel').value = g.channelId;
+
+  fill($('track'), data.library.map(name => [name, name.replace(/\.mp3$/i, '')]));
+
+  $('now').textContent = g?.current ? (g.paused ? '⏸ ' : '▶ ') + g.current : 'Rien en lecture';
+
+  const items = (g?.queue || []).map(name => {
+    const li = document.createElement('li');
+    li.textContent = name;
+    return li;
+  });
+  $('queue').replaceChildren(...items);
+  $('qempty').hidden = items.length > 0;
+}
+
+async function refresh() {
+  try {
+    data = await api('/api/state');
+    show(true);
+    render();
+  } catch (error) {
+    if (error.message.includes('WEB_PASSWORD')) $('lerr').textContent = error.message;
+  }
+}
+
+async function act(fn) {
+  try {
+    msg(await fn() || '');
+  } catch (error) {
+    msg(error.message, true);
+  }
+  refresh();
+}
+
+const ctx = () => ({ guildId: $('guild').value, channelId: $('channel').value });
+
+$('add').onclick = () => act(async () =>
+  (await api('/api/play', post({ ...ctx(), source: 'local', value: $('track').value }))).message);
+
+$('sp').onclick = () => act(async () => {
+  const result = await api('/api/play', post({ ...ctx(), source: 'spotify', value: $('spurl').value }));
+  $('spurl').value = '';
+  return result.message;
+});
+
+$('file').onchange = () => act(async () => {
+  const file = $('file').files[0];
+  if (!file) return '';
+  const params = new URLSearchParams({ ...ctx(), name: file.name });
+  const result = await api('/api/upload?' + params, { method: 'PUT', body: file });
+  $('file').value = '';
+  return result.message;
+});
+
+['pause', 'resume', 'skip', 'stop'].forEach(action => {
+  $(action).onclick = () => act(async () => {
+    await api('/api/control', post({ guildId: $('guild').value, action }));
+  });
+});
+
+$('guild').onchange = render;
+
+$('login').onsubmit = async event => {
+  event.preventDefault();
+  try {
+    await api('/api/login', post({ password: $('pw').value }));
+    $('pw').value = '';
+    $('lerr').textContent = '';
+    refresh();
+  } catch (error) {
+    $('lerr').textContent = error.message;
+  }
+};
+
+setInterval(() => { if (!$('app').hidden) refresh(); }, 3000);
+refresh();
+</script>
+</body>
+</html>
