@@ -9,6 +9,20 @@ const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 
 const { Client, GatewayIntentBits, Events } = require('discord.js');
+const http = require('http');
+
+const PORT = process.env.PORT || 10000;
+
+const server = http.createServer((req, res) => {
+    res.writeHead(200, {
+        'Content-Type': 'text/plain'
+    });
+    res.end('MCT MUSIC is online!');
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`MCT MUSIC HTTP server running on port ${PORT}`);
+});
 
 const {
   joinVoiceChannel,
