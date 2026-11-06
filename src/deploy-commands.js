@@ -33,7 +33,7 @@ const commands = [
     .addStringOption(option =>
       option
         .setName('spotify')
-        .setDescription('Lien Spotify d’un morceau (retrouvé dans tes MP3)')
+        .setDescription('Lien Spotify (morceau, album ou playlist) retrouvé dans tes MP3')
         .setRequired(false)
     ),
 

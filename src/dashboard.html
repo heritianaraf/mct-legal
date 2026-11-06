@@ -26,7 +26,7 @@ button:hover,.file:hover{opacity:.85}
 ol{margin:0;padding-left:22px}
 li{padding:2px 0;word-break:break-word}
 .empty{color:var(--mut);font-style:italic}
-#msg{min-height:1.4em;margin:0 0 16px;color:var(--ok);font:.9rem system-ui,sans-serif}
+#msg{white-space:pre-line;min-height:1.4em;margin:0 0 16px;color:var(--ok);font:.9rem system-ui,sans-serif}
 #msg.err,#lerr{color:var(--ac)}
 #login{max-width:360px;margin:15vh auto 0}
 .stack{display:grid;gap:10px}
@@ -76,7 +76,7 @@ input[type=file]{display:none}
           <button id="add" class="main">Ajouter</button>
         </div>
         <div class="row">
-          <input id="spurl" type="text" placeholder="Lien Spotify d’un morceau">
+          <input id="spurl" type="text" placeholder="Lien Spotify (morceau, album, playlist)">
           <button id="sp" class="main">Chercher</button>
         </div>
         <label class="file">Envoyer un MP3 depuis mon ordinateur<input id="file" type="file" accept=".mp3,audio/mpeg"></label>

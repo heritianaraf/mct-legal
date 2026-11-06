@@ -493,12 +493,26 @@ async function enqueueSpotify(state, rawUrl) {
 }
 
 function spotifyReport({ label, added, missing }) {
-  if (added.length) {
-    return `🎧 **${label}** trouvé dans ta bibliothèque MP3 et ajouté à la file.`;
+  const total = added.length + missing.length;
+
+  if (total === 1) {
+    if (added.length) {
+      return `🎧 **${label}** trouvé dans ta bibliothèque MP3 et ajouté à la file.`;
+    }
+
+    return `🎧 **${missing[0] || label}** : aucun MP3 correspondant dans le dossier music.\n` +
+      'Spotify ne fournit pas l’audio : ajoute le MP3 (nommé avec le titre du morceau) puis relance la commande.';
   }
 
-  return `🎧 **${missing[0] || label}** : aucun MP3 correspondant dans le dossier music.\n` +
-    'Spotify ne fournit pas l’audio : ajoute le MP3 (nommé avec le titre du morceau) puis relance la commande.';
+  let text = `🎧 **${label}** : ${added.length}/${total} morceaux trouvés dans ta bibliothèque MP3 et ajoutés à la file.`;
+
+  if (missing.length) {
+    text += '\n⚠️ Sans MP3 correspondant :\n' +
+      missing.slice(0, 10).map(name => `• ${name}`).join('\n') +
+      (missing.length > 10 ? `\n… et ${missing.length - 10} autre(s)` : '');
+  }
+
+  return text.slice(0, 1900);
 }
 
 // ======================================
