@@ -46,10 +46,10 @@ main {
 }
 
 h1 {
-    font-size: 2rem;
-    letter-spacing: .14em;
-    margin: 0 0 4px;
+    font-size: clamp(1.2rem, 5vw, 2rem);
+    letter-spacing: .08em;
     text-align: center;
+    overflow-wrap: anywhere;
 }
 
 h1 span {
@@ -164,10 +164,10 @@ li {
 }
 
 #login {
-    max-width: 360px;
-    margin: 15vh auto 0;
+    width: 100%;
+    max-width: 460px;
+    margin: 10vh auto 0;
 }
-
 .stack {
     display: grid;
     gap: 10px;
@@ -175,8 +175,8 @@ li {
 
 .login-logo {
     display: block;
-    width: 180px;
-    height: 180px;
+    width: 160px;
+    height: 160px;
     object-fit: contain;
     margin: 0 auto 10px;
 }
@@ -196,7 +196,9 @@ input[type="file"] {
 
     <form id="login" class="card stack">
 
-        <img src="./assets/logo_mct.jpg" alt="Logo MCT Music Player" class="login-logo">
+        <img src="./assets/logo_mct.jpg"
+        alt="Logo MCT Music Player"
+        class="login-logo">
 
         <h1>MCT<span>·</span>MUSIC<span>·</span>PLAYER</h1>
 
