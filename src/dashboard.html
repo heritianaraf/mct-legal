@@ -208,6 +208,19 @@ input[type="file"] {
     display: none;
 }
 
+.vol {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-top: 14px;
+    font: .9rem system-ui, sans-serif;
+}
+
+.vol input {
+    flex: 1;
+    accent-color: var(--ac);
+}
+
 summary {
     cursor: pointer;
     color: var(--mut);
@@ -250,6 +263,11 @@ summary {
     </form>
 
   <div id="app" hidden>
+    <img
+    src="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"
+    alt="MCT Music Player"
+    class="login-logo"
+>
     <h1>MCT<span>·</span>MUSIC</h1>
     <p class="sub">Pilote le bot depuis ton navigateur.</p>
 
@@ -270,6 +288,10 @@ summary {
         <button id="skip" class="ghost">⏭ Suivant</button>
         <button id="stop" class="ghost">⏹ Arrêter</button>
         <button id="loop" class="ghost" hidden>🔁 Boucle</button>
+      </div>
+      <div class="vol">
+        <span id="voltxt">🔊 100%</span>
+        <input id="vol" type="range" min="0" max="200" step="5" value="100" aria-label="Volume">
       </div>
     </div>
 
@@ -357,6 +379,7 @@ summary {
 <script>
 const $ = id => document.getElementById(id);
 let data = { guilds: [] };
+let volTouched = 0; // dernier réglage du curseur (évite que le rafraîchissement le remette en place)
 const selected = new Set(); // morceaux cochés dans la file : "index|nom"
 const picked = new Set();   // playlists cochées
 
@@ -439,6 +462,9 @@ function render() {
       return li;
     }));
   }
+
+  if (Date.now() - volTouched > 4000) $('vol').value = g?.volume ?? 100;
+  $('voltxt').textContent = '🔊 ' + $('vol').value + '%';
 
   $('now').textContent = g?.current ? (g.paused ? '⏸ ' : '▶ ') + g.current : 'Rien en lecture';
 
@@ -574,7 +600,6 @@ $('stdel').onclick = () => {
   act(async () => (await api('/api/station/delete', post({ guildId: $('guild').value, name, password: $('stpw').value }))).message);
 };
 
-
 $('stlinkbtn').onclick = () => act(async () => {
   const result = await api('/api/station/add', post({
     guildId: $('guild').value,
@@ -655,7 +680,22 @@ $('loop').onclick = () => {
   });
 });
 
-$('guild').onchange = render;
+$('vol').oninput = () => {
+  volTouched = Date.now();
+  $('voltxt').textContent = '🔊 ' + $('vol').value + '%';
+};
+
+$('vol').onchange = async () => {
+  volTouched = Date.now();
+  try {
+    await api('/api/volume', post({ guildId: $('guild').value, volume: Number($('vol').value) }));
+    msg('');
+  } catch (error) {
+    msg(error.message, true);
+  }
+};
+
+$('guild').onchange = () => { volTouched = 0; render(); };
 
 $('login').onsubmit = async event => {
   event.preventDefault();

@@ -111,6 +111,11 @@ function startWeb(bot) {
         return send(res, 200, { message: await bot.play(guildId, channelId, source, value, loop) });
       }
 
+      if (url.pathname === '/api/volume' && req.method === 'POST') {
+        const { guildId, volume } = await readJson(req);
+        return send(res, 200, { message: bot.volume(guildId, volume) });
+      }
+
       if (url.pathname === '/api/control' && req.method === 'POST') {
         const { guildId, action } = await readJson(req);
         await bot.control(guildId, action);

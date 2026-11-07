@@ -50,6 +50,19 @@ const commands = [
     .setName('queue')
     .setDescription('Afficher la file d’attente'),
 
+  // VOLUME
+  new SlashCommandBuilder()
+    .setName('volume')
+    .setDescription('Régler le volume de la musique')
+    .addIntegerOption(option =>
+      option
+        .setName('niveau')
+        .setDescription('Volume en % (100 = normal, max 200). Vide : affiche le volume actuel')
+        .setMinValue(0)
+        .setMaxValue(200)
+        .setRequired(false)
+    ),
+
   // STATION (playlists)
   new SlashCommandBuilder()
     .setName('station')
@@ -189,7 +202,7 @@ async function main() {
   console.log('/play url');
   console.log('/station creer /ajouter /retirer /jouer /boucle /liste /supprimer');
   console.log('/pause /resume /stop');
-  console.log('/skip /queue');
+  console.log('/skip /queue /volume');
   console.log('================================');
 }
 

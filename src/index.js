@@ -384,6 +384,49 @@ function cleanupTrack(track) {
 }
 
 // ======================================
+// VOLUME (par serveur, enregistré dans volumes.json)
+// ======================================
+
+const VOLUME_FILE = path.join(MUSIC_DIR, '..', 'volumes.json');
+const DEFAULT_VOLUME = 100;
+const MAX_VOLUME = 200;
+
+const volumes = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(VOLUME_FILE, 'utf8')) || {};
+  } catch {
+    return {};
+  }
+})();
+
+function getVolume(guildId) {
+  const value = Number(volumes[String(guildId)]);
+  return Number.isFinite(value) ? Math.min(Math.max(Math.round(value), 0), MAX_VOLUME) : DEFAULT_VOLUME;
+}
+
+// Change le volume (en %) : appliqué tout de suite au morceau en cours et mémorisé.
+function setVolume(guildId, level) {
+  const value = level === null || level === undefined || level === '' ? NaN : Math.round(Number(level));
+
+  if (!Number.isFinite(value) || value < 0 || value > MAX_VOLUME) {
+    throw new Error(`Le volume doit être un nombre entre 0 et ${MAX_VOLUME}.`);
+  }
+
+  volumes[String(guildId)] = value;
+
+  try {
+    const tmp = `${VOLUME_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(volumes));
+    fs.renameSync(tmp, VOLUME_FILE);
+  } catch (error) {
+    console.error('Impossible d’enregistrer le volume :', error.message);
+  }
+
+  queues.get(String(guildId))?.resource?.volume?.setVolume(value / 100);
+  return value;
+}
+
+// ======================================
 // CRÉATION DU LECTEUR
 // ======================================
 
@@ -399,6 +442,7 @@ function createMusicState(guildId, textChannel) {
     connection: null,
     items: [],
     current: null,
+    resource: null,
     textChannel,
     station: null,
     loop: false,
@@ -566,8 +610,12 @@ function playTrack(guildId, state, track) {
   });
 
   const resource = createAudioResource(ffmpeg.stdout, {
-    inputType: StreamType.Raw
+    inputType: StreamType.Raw,
+    inlineVolume: true
   });
+
+  resource.volume?.setVolume(getVolume(guildId) / 100);
+  state.resource = resource;
 
   state.player.play(resource);
 
@@ -660,7 +708,12 @@ function assertGuild(guildId) {
 }
 
 const botApi = {
-  passwordSet: hasPlaylistPassword,
+  passwordSet: () => hasPlaylistPassword(),
+
+  volume(guildId, level) {
+    assertGuild(guildId);
+    return `🔊 Volume : ${setVolume(guildId, level)}%`;
+  },
 
   setPlaylistPassword(newPassword, oldPassword) {
     const existed = hasPlaylistPassword();
@@ -681,6 +734,7 @@ const botApi = {
           .map(channel => ({ id: channel.id, name: channel.name })),
         channelId: state?.connection?.joinConfig?.channelId || null,
         current: state?.current?.name || null,
+        volume: getVolume(guild.id),
         paused: status === AudioPlayerStatus.Paused || status === AudioPlayerStatus.AutoPaused,
         queue: state ? state.items.map(track => track.name) : [],
         station: state?.station || null,
@@ -981,6 +1035,20 @@ client.on(Events.InteractionCreate, async interaction => {
       );
 
       startTrack(guildId);
+    }
+
+    // VOLUME
+    else if (command === 'volume') {
+      const level = interaction.options.getInteger('niveau');
+
+      if (level === null) {
+        return interaction.reply({
+          content: `🔊 Volume actuel : **${getVolume(guildId)}%**`,
+          ephemeral: true
+        });
+      }
+
+      return interaction.reply(`🔊 Volume réglé à **${setVolume(guildId, level)}%**.`);
     }
 
     // NEXT
