@@ -23,7 +23,7 @@ const {
 } = require('discord.js');
 
 const { startWeb } = require('./web');
-const { resolveSpotify } = require('./spotify');
+const { resolveSpotify, spotifyApiEnabled } = require('./spotify');
 
 const {
   joinVoiceChannel,
@@ -1799,7 +1799,11 @@ client.once(Events.ClientReady, readyClient => {
   console.log('✅ Lecture des MP3 publics Google Drive activée');
   console.log('✅ Radios / flux audio en direct activés');
   console.log('✅ Playlists (/station) : Spotify, Drive, radios et MP3');
-  console.log('✅ Liens Spotify : retrouvés dans les MP3 locaux (titre du morceau)');
+  console.log(
+    spotifyApiEnabled()
+      ? '✅ Liens Spotify : API officielle activée (repli sur la page publique), titres retrouvés dans les MP3 locaux'
+      : '✅ Liens Spotify : page publique (ajoute SPOTIFY_CLIENT_ID et SPOTIFY_CLIENT_SECRET dans .env pour l’API), titres retrouvés dans les MP3 locaux'
+  );
   console.log('================================');
 });
 
