@@ -1357,6 +1357,7 @@ function saveStations(all) {
     if (fs.existsSync(STATIONS_FILE)) fs.copyFileSync(STATIONS_FILE, `${STATIONS_FILE}.bak`);
   } catch {}
   fs.renameSync(tmp, STATIONS_FILE);
+  scheduleBackup();
 }
 
 const guildStations = guildId => loadStations()[guildId] || [];
@@ -1922,11 +1923,81 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 });
 
+
+// ======================================
+// SAUVEGARDE DES PLAYLISTS DANS UN SALON DISCORD PRIVÉ
+// (utile sans disque persistant : le fichier est restauré au démarrage)
+// Définis BACKUP_CHANNEL_ID dans .env (salon privé où le bot peut écrire).
+// ======================================
+
+const BACKUP_CHANNEL_ID = (process.env.BACKUP_CHANNEL_ID || '').trim();
+const BACKUP_NAME = 'stations.json';
+let backupTimer = null;
+
+async function backupChannel() {
+  if (!BACKUP_CHANNEL_ID) return null;
+  const channel = await client.channels.fetch(BACKUP_CHANNEL_ID).catch(() => null);
+  return channel?.isTextBased() ? channel : null;
+}
+
+function scheduleBackup() {
+  if (!BACKUP_CHANNEL_ID) return;
+  clearTimeout(backupTimer);
+  backupTimer = setTimeout(async () => {
+    try {
+      const channel = await backupChannel();
+      if (!channel || !fs.existsSync(STATIONS_FILE)) return;
+
+      const sent = await channel.send({
+        content: `💾 Sauvegarde des playlists (${new Date().toISOString()})`,
+        files: [{ attachment: Buffer.from(fs.readFileSync(STATIONS_FILE)), name: BACKUP_NAME }]
+      });
+
+      const recent = await channel.messages.fetch({ limit: 30 });
+      for (const message of recent.values()) {
+        if (message.id !== sent.id && message.author.id === client.user.id && message.attachments.some(a => a.name === BACKUP_NAME)) {
+          message.delete().catch(() => {});
+        }
+      }
+    } catch (error) {
+      console.error('Sauvegarde des playlists impossible :', error.message);
+    }
+  }, 5000);
+}
+
+// Au démarrage : si stations.json est absent, on le récupère dans le salon de sauvegarde.
+async function restoreBackup() {
+  try {
+    if (!BACKUP_CHANNEL_ID || fs.existsSync(STATIONS_FILE)) return;
+
+    const channel = await backupChannel();
+    if (!channel) return console.warn('BACKUP_CHANNEL_ID : salon introuvable ou inaccessible.');
+
+    const recent = await channel.messages.fetch({ limit: 50 });
+    const message = [...recent.values()]
+      .filter(m => m.author.id === client.user.id && m.attachments.some(a => a.name === BACKUP_NAME))
+      .sort((a, b) => b.createdTimestamp - a.createdTimestamp)[0];
+    if (!message) return console.log('Aucune sauvegarde de playlists trouvée dans le salon.');
+
+    const attachment = message.attachments.find(a => a.name === BACKUP_NAME);
+    const response = await fetch(attachment.url, { signal: AbortSignal.timeout(30000) });
+    if (!response.ok) throw new Error(`téléchargement ${response.status}`);
+
+    const text = await response.text();
+    JSON.parse(text); // vérifie que le fichier est valide
+    fs.writeFileSync(STATIONS_FILE, text);
+    console.log('✅ Playlists restaurées depuis le salon de sauvegarde.');
+  } catch (error) {
+    console.error('Restauration des playlists impossible :', error.message);
+  }
+}
+
 // ======================================
 // DÉMARRAGE
 // ======================================
 
-client.once(Events.ClientReady, readyClient => {
+client.once(Events.ClientReady, async readyClient => {
+  await restoreBackup();
   console.log('================================');
   console.log(`🎵 MCT MUSIC connecté : ${readyClient.user.tag}`);
   console.log('✅ Lecture des MP3 joints aux commandes /play activée');
