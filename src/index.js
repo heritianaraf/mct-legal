@@ -8,6 +8,8 @@ const ffmpegPath = require('ffmpeg-static');
 const { randomUUID } = require('node:crypto');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
+const dns = require('node:dns/promises');
+const net = require('node:net');
 
 const { Client, GatewayIntentBits, Events, MessageFlags } = require('discord.js');
 
@@ -485,10 +487,21 @@ function startTrack(guildId) {
 }
 
 function playTrack(guildId, state, track) {
+  const input = track.stream
+    ? [
+        '-protocol_whitelist', 'http,https,tcp,tls,crypto',
+        '-reconnect', '1',
+        '-reconnect_streamed', '1',
+        '-reconnect_delay_max', '5',
+        '-rw_timeout', '15000000',
+        '-i', track.stream
+      ]
+    : ['-i', track.file];
+
   const ffmpeg = spawn(ffmpegPath || 'ffmpeg', [
     '-hide_banner',
     '-loglevel', 'error',
-    '-i', track.file,
+    ...input,
     '-vn',
     '-f', 's16le',
     '-ar', '48000',
@@ -572,6 +585,107 @@ async function ensureVoice(guild, voiceChannel, state) {
 
 function connectVoice(interaction, state) {
   return ensureVoice(interaction.guild, interaction.member.voice?.channel, state);
+}
+
+// ======================================
+// RADIO / FLUX AUDIO EN DIRECT
+// ======================================
+
+const RADIO_UA = 'Mozilla/5.0 (compatible; MCTMusic/1.0)';
+const BLOCKED_STREAM_HOSTS = /(^|\.)(youtube\.com|youtu\.be|spotify\.com)$/i;
+
+function isPrivateIp(ip) {
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split('.').map(Number);
+    return a === 0 || a === 10 || a === 127 ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168);
+  }
+
+  const value = ip.toLowerCase();
+  if (value.startsWith('::ffff:')) return isPrivateIp(value.slice(7));
+  return value === '::' || value === '::1' ||
+    value.startsWith('fc') || value.startsWith('fd') || value.startsWith('fe80');
+}
+
+// Empêche d'utiliser le bot pour atteindre le réseau interne du serveur.
+async function assertPublicHost(hostname) {
+  const host = hostname.replace(/^\[|\]$/g, '');
+  const addresses = net.isIP(host)
+    ? [{ address: host }]
+    : await dns.lookup(host, { all: true }).catch(() => {
+        throw new Error('Adresse de la radio introuvable.');
+      });
+
+  if (!addresses.length || addresses.some(entry => isPrivateIp(entry.address))) {
+    throw new Error('Cette adresse n’est pas autorisée.');
+  }
+}
+
+async function enqueueRadio(state, rawUrl) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error('Lien de radio invalide.');
+  }
+
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('Le lien doit commencer par http:// ou https://.');
+  }
+
+  if (BLOCKED_STREAM_HOSTS.test(url.hostname)) {
+    throw new Error(
+      'YouTube et Spotify ne sont pas pris en charge. Colle l’adresse directe d’un flux radio (Icecast, Shoutcast, HLS).'
+    );
+  }
+
+  await assertPublicHost(url.hostname);
+
+  let response;
+  try {
+    response = await fetch(url, {
+      headers: { 'User-Agent': RADIO_UA, 'Icy-MetaData': '0' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(10000)
+    });
+  } catch {
+    throw new Error('Impossible de joindre cette radio (adresse incorrecte ou hors ligne ?).');
+  }
+
+  // On ne lit que les en-têtes : le flux ne doit jamais être téléchargé ici.
+  await response.body?.cancel().catch(() => {});
+
+  const finalUrl = new URL(response.url);
+  if (finalUrl.hostname !== url.hostname) await assertPublicHost(finalUrl.hostname);
+
+  if (!response.ok) {
+    throw new Error(`La radio a répondu avec une erreur (${response.status}).`);
+  }
+
+  const type = (response.headers.get('content-type') || '').toLowerCase();
+  const isAudio = /^audio\//.test(type) ||
+    /^application\/(ogg|octet-stream|vnd\.apple\.mpegurl|x-mpegurl)/.test(type);
+
+  if (!isAudio) {
+    throw new Error('Ce lien n’est pas un flux audio direct (c’est probablement une page web).');
+  }
+
+  const title = (response.headers.get('icy-name') || '')
+    .replace(/[\u0000-\u001f]/g, '')
+    .trim()
+    .slice(0, 80) || finalUrl.hostname;
+
+  state.items.push({
+    name: `📻 ${title}`,
+    stream: finalUrl.href,
+    ffmpeg: null,
+    deleteOnFinish: false
+  });
+
+  return `📻 ${title} ajoutée à la file. Une radio ne se termine pas : utilise Suivant pour passer à la suite.`;
 }
 
 // ======================================
@@ -742,6 +856,10 @@ const botApi = {
         return enqueueDrive(state, String(value || ''));
       }
 
+      if (source === 'radio') {
+        return enqueueRadio(state, String(value || ''));
+      }
+
       throw new Error('Source inconnue.');
     });
   },
@@ -810,18 +928,19 @@ client.on(Events.InteractionCreate, async interaction => {
       const localName = interaction.options.getString('nom');
       const rawUrl = interaction.options.getString('url');
       const spotifyUrl = interaction.options.getString('spotify');
-      const suppliedSources = [attachment, localName, rawUrl, spotifyUrl].filter(Boolean).length;
+      const radioUrl = interaction.options.getString('radio');
+      const suppliedSources = [attachment, localName, rawUrl, spotifyUrl, radioUrl].filter(Boolean).length;
 
       if (suppliedSources === 0) {
         return interaction.reply({
-          content: '❌ Ajoute un MP3, un nom de fichier local, un lien Google Drive ou un lien Spotify.',
+          content: '❌ Ajoute un MP3, un nom de fichier local, un lien Google Drive, un lien Spotify ou une radio.',
           ephemeral: true
         });
       }
 
       if (suppliedSources > 1) {
         return interaction.reply({
-          content: '❌ Choisis une seule source : fichier, nom, URL ou Spotify.',
+          content: '❌ Choisis une seule source : fichier, nom, URL, Spotify ou radio.',
           ephemeral: true
         });
       }
@@ -884,6 +1003,12 @@ client.on(Events.InteractionCreate, async interaction => {
           }
 
           await interaction.editReply(spotifyReport(result));
+          startTrack(guildId);
+          return;
+
+        } else if (radioUrl) {
+          const message = await enqueueRadio(state, radioUrl);
+          await interaction.editReply(message);
           startTrack(guildId);
           return;
 
@@ -1070,6 +1195,7 @@ client.once(Events.ClientReady, readyClient => {
   console.log('✅ Lecture MP3 locale activée');
   console.log('✅ Lecture des MP3 joints aux commandes /play activée');
   console.log('✅ Lecture des MP3 publics Google Drive activée');
+  console.log('✅ Radios / flux audio en direct activés');
   console.log('✅ Liens Spotify : retrouvés dans les MP3 locaux (titre du morceau)');
   console.log('================================');
 });

@@ -35,6 +35,12 @@ const commands = [
         .setName('spotify')
         .setDescription('Lien Spotify (morceau, album ou playlist) retrouvé dans tes MP3')
         .setRequired(false)
+    )
+    .addStringOption(option =>
+      option
+        .setName('radio')
+        .setDescription('Adresse directe d’une radio / flux audio (Icecast, Shoutcast, HLS)')
+        .setRequired(false)
     ),
 
   // PAUSE
@@ -100,6 +106,7 @@ async function main() {
   console.log('/play nom');
   console.log('/play url');
   console.log('/play spotify');
+  console.log('/play radio');
   console.log('/pause /resume /stop');
   console.log('/skip /queue /list');
   console.log('================================');
