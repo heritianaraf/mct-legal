@@ -196,6 +196,7 @@ async function main() {
     { body: commands }
   );
 
+  
   console.log('================================');
   console.log('MCT MUSIC : commandes enregistrées');
   console.log('/play fichier');

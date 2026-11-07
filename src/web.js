@@ -58,6 +58,7 @@ function startWeb(bot) {
     req.on('error', reject);
   });
 
+  
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
 

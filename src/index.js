@@ -1156,6 +1156,7 @@ const ITEM_ICONS = { drive: '☁️', file: '🎵' };
 
 fs.mkdirSync(PLAYLIST_DIR, { recursive: true });
 
+
 // ======================================
 // MOT DE PASSE DES PLAYLISTS (un par playlist, créé avec elle)
 // ======================================
