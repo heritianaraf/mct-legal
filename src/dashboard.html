@@ -314,6 +314,112 @@ summary {
     margin: 4px 0 6px 28px;
 }
 
+/* Menu glissant des playlists */
+.pl-nav {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+}
+
+.nav {
+    flex: 0 0 40px;
+    padding: 0;
+    font-size: 2.4rem;
+    font-weight: 700;
+    line-height: 1;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, .12);
+}
+
+.nav:disabled {
+    opacity: .3;
+    cursor: default;
+}
+
+.pl-viewport {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, .05);
+    border: 1px solid var(--bd);
+    touch-action: pan-y;
+}
+
+.pl-panel {
+    padding: 16px;
+    display: grid;
+    gap: 12px;
+}
+
+.slide-next {
+    animation: inFromRight .28s ease;
+}
+
+.slide-prev {
+    animation: inFromLeft .28s ease;
+}
+
+@keyframes inFromRight {
+    from { transform: translateX(40px); opacity: 0; }
+    to { transform: none; opacity: 1; }
+}
+
+@keyframes inFromLeft {
+    from { transform: translateX(-40px); opacity: 0; }
+    to { transform: none; opacity: 1; }
+}
+
+.pl-name {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin: 0;
+    word-break: break-word;
+}
+
+.pl-meta {
+    color: var(--mut);
+    font-size: .8rem;
+    margin: 0;
+}
+
+.dots {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 12px;
+}
+
+.dot {
+    width: 8px;
+    height: 8px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 99px;
+    background: rgba(255, 255, 255, .25);
+    box-shadow: none;
+}
+
+.dot.on {
+    width: 24px;
+    background: var(--pink);
+}
+
+.pvbar {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    padding: 10px 16px;
+    margin-bottom: 16px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 122, 69, .5);
+    background: rgba(255, 122, 69, .12);
+    font-size: .82rem;
+}
+
 [hidden] {
     display: none !important;
 }
@@ -345,11 +451,19 @@ summary {
             Se connecter
         </button>
 
+        <button type="button" id="preview" class="ghost">
+            👁 Aperçu du dashboard
+        </button>
+
         <div id="lerr" class="sub" role="alert"></div>
 
     </form>
 
   <div id="app" hidden>
+    <div id="pvbar" class="pvbar" hidden>
+      <span>👁 Mode aperçu : données fictives, rien n’est envoyé au bot. Mot de passe des playlists : <b>demo</b></span>
+      <button type="button" id="pvquit" class="ghost">Quitter l’aperçu</button>
+    </div>
     <img
     src="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"
     alt="MCT Music Player"
@@ -412,27 +526,54 @@ summary {
     <div class="card">
       <h2>Playlists</h2>
       <div class="stack">
-        <div class="row" id="stlist">
-          <select id="station" aria-label="Playlist"></select>
-          <button id="stplay" class="play">Lancer</button>
-          <button id="stshow" class="ghost">Afficher la liste</button>
-          <button id="stdel" class="del">Supprimer</button>
-        </div>
-        <label class="chk" id="stloopl"><input type="checkbox" id="stloop" checked> Relancer la playlist en boucle</label>
-        <div class="row" id="stdelbox" hidden>
-          <input id="stpw" type="password" placeholder="Mot de passe de la playlist" autocomplete="off">
-          <button id="stdelok" class="del">Confirmer</button>
-          <button id="stdelno" class="ghost">Annuler</button>
-        </div>
-        <ol id="stitems" hidden></ol>
         <p id="stempty" class="empty">Aucune playlist pour ce serveur.</p>
-        <div id="stadd" class="stack">
-          <div class="row">
-            <input id="stlink" type="text" placeholder="Ajouter : lien Google Drive (MP3 ou dossier)">
-            <button id="stlinkbtn" class="add">Ajouter</button>
+
+        <div id="stlist" class="stack">
+          <div class="pl-nav">
+            <button id="plprev" class="ghost nav" aria-label="Playlist précédente" title="Playlist précédente">‹</button>
+
+            <div class="pl-viewport" id="plview">
+              <div class="pl-panel" id="plpanel">
+                <div>
+                  <p class="pl-name" id="plname">—</p>
+                  <p class="pl-meta" id="plmeta"></p>
+                </div>
+
+                <div class="row">
+                  <button id="stplay" class="play">▶ Lancer</button>
+                  <button id="stshow" class="ghost">👁 Afficher la liste</button>
+                  <button id="stdel" class="del">Supprimer</button>
+                </div>
+
+                <label class="chk" id="stloopl"><input type="checkbox" id="stloop" checked> Relancer la playlist en boucle</label>
+
+                <div class="stack" id="stpwbox" hidden>
+                  <p class="pl-meta" id="stpwtitle"></p>
+                  <div class="row">
+                    <input id="stpw" type="password" placeholder="Mot de passe de la playlist" autocomplete="off">
+                    <button id="stpwok" class="main">Valider</button>
+                    <button id="stpwno" class="ghost">Annuler</button>
+                  </div>
+                </div>
+
+                <ol id="stitems" hidden></ol>
+
+                <div id="stadd" class="stack">
+                  <button id="stcur" class="add">➕ Ajouter le morceau en cours</button>
+                  <div class="row">
+                    <input id="stlink" type="text" placeholder="Ajouter : lien Google Drive (MP3 ou dossier)">
+                    <button id="stlinkbtn" class="add">Ajouter</button>
+                  </div>
+                  <label class="file add">Ajouter des MP3 depuis mon PC ou TELEPHONE<input id="stfile" type="file" accept=".mp3,audio/mpeg" multiple></label>
+                </div>
+              </div>
+            </div>
+
+            <button id="plnext" class="ghost nav" aria-label="Playlist suivante" title="Playlist suivante">›</button>
           </div>
-          <label class="file add">Ajouter des MP3 depuis mon PC ou TELEPHONE<input id="stfile" type="file" accept=".mp3,audio/mpeg" multiple></label>
+          <div id="pldots" class="dots"></div>
         </div>
+
         <button id="stopennew" class="add">➕ Ajouter une playlist</button>
         <div id="stnewbox" class="stack" hidden>
           <h2 class="sep">Nouvelle playlist</h2>
@@ -476,11 +617,18 @@ let data = { guilds: [] };
 let sounds = { guildId: null, items: [] };
 let volTouched = 0; // dernier réglage du curseur (évite que le rafraîchissement le remette en place)
 const selected = new Set(); // morceaux cochés dans la file : "index|nom"
+const picked = new Set();   // playlists cochées (ajout de la file)
 let showList = false;       // contenu de la playlist affiché ?
+let unlocked = null;        // { name, password, items } : liste déverrouillée par le mot de passe
+let currentName = null;     // playlist affichée dans le menu glissant
 let lastStation = null;
-const picked = new Set();   // playlists cochées
+let pendingKind = null;     // action qui attend le mot de passe : show | delete | current
+let demo = false;           // mode aperçu (données fictives)
+let demoState = null;
+let demoItems = {};
 
 async function api(url, opts = {}) {
+  if (demo) return demoApi(url, opts);
   const res = await fetch(url, opts);
   const json = await res.json().catch(() => ({}));
   if (res.status === 401 && url !== '/api/login') {
@@ -517,7 +665,14 @@ function fill(select, items) {
 }
 
 function removeItem(name, index) {
-  act(async () => (await api('/api/station/remove-item', post({ guildId: $('guild').value, name, index }))).message);
+  if (!unlocked || unlocked.name !== name) return;
+  act(async () => {
+    const guildId = $('guild').value;
+    const result = await api('/api/station/remove-item', post({ guildId, name, index, password: unlocked.password }));
+    const again = await api('/api/station/items', post({ guildId, name, password: unlocked.password }));
+    unlocked.items = again.items || [];
+    return result.message;
+  });
 }
 
 function queueAction(index, name, action) {
@@ -544,6 +699,102 @@ function renderSounds() {
   $('soundplay').hidden = sounds.items.length === 0;
 }
 
+function closePrompt() {
+  pendingKind = null;
+  $('stpwbox').hidden = true;
+  $('stpw').value = '';
+}
+
+function renderStations(g, stations) {
+  const icons = { drive: '☁️', file: '🎵' };
+
+  if (!stations.some(s => s.name === currentName)) currentName = stations[0]?.name || null;
+  const idx = stations.findIndex(s => s.name === currentName);
+  const st = stations[idx] || null;
+
+  $('stempty').hidden = stations.length > 0;
+  $('stlist').hidden = !stations.length;
+
+  if (lastStation !== currentName) {
+    lastStation = currentName;
+    showList = false;
+    unlocked = null;
+    closePrompt();
+  }
+  if (!st) return;
+
+  $('plname').textContent = (st.locked ? '🔒 ' : '') + st.name;
+  $('plmeta').textContent = st.count + ' morceau(x) · ' + (idx + 1) + '/' + stations.length;
+  $('plprev').disabled = stations.length < 2;
+  $('plnext').disabled = stations.length < 2;
+
+  const dsig = JSON.stringify([stations.map(s => s.name), idx]);
+  if ($('pldots').dataset.sig !== dsig) {
+    $('pldots').dataset.sig = dsig;
+    $('pldots').replaceChildren(...stations.map((s, i) => {
+      const dot = document.createElement('button');
+      dot.className = 'dot' + (i === idx ? ' on' : '');
+      dot.title = s.name;
+      dot.setAttribute('aria-label', s.name);
+      dot.onclick = () => goTo(i);
+      return dot;
+    }));
+  }
+
+  const open = showList && unlocked && unlocked.name === st.name;
+  $('stitems').hidden = !open;
+  $('stshow').textContent = open ? '🙈 Masquer la liste' : '👁 Afficher la liste (' + st.count + ')';
+
+  const sig = JSON.stringify(open ? unlocked.items : null);
+  if ($('stitems').dataset.sig !== sig) {
+    $('stitems').dataset.sig = sig;
+    $('stitems').replaceChildren(...(open ? unlocked.items : []).map((item, index) => {
+      const li = document.createElement('li');
+      li.append((icons[item.type] || '•') + ' ' + item.label);
+      const rm = document.createElement('button');
+      rm.className = 'ghost rm';
+      rm.textContent = '✕';
+      rm.title = 'Retirer (mot de passe de la playlist)';
+      rm.onclick = () => removeItem(st.name, index);
+      li.append(rm);
+      return li;
+    }));
+  }
+
+  $('stcur').disabled = !g?.current;
+  $('stcur').title = g?.current ? 'Ajouter « ' + g.current + ' » à cette playlist' : 'Rien en lecture';
+}
+
+function goTo(i) {
+  const stations = stationsNow();
+  if (!stations[i]) return;
+  const idx = stations.findIndex(s => s.name === currentName);
+  if (i === idx) return;
+
+  const panel = $('plpanel');
+  panel.classList.remove('slide-next', 'slide-prev');
+  void panel.offsetWidth;
+  panel.classList.add(i > idx ? 'slide-next' : 'slide-prev');
+
+  currentName = stations[i].name;
+  render();
+}
+
+function go(step) {
+  const stations = stationsNow();
+  if (stations.length < 2) return;
+  const idx = stations.findIndex(s => s.name === currentName);
+  const target = (idx + step + stations.length) % stations.length;
+
+  const panel = $('plpanel');
+  panel.classList.remove('slide-next', 'slide-prev');
+  void panel.offsetWidth;
+  panel.classList.add(step > 0 ? 'slide-next' : 'slide-prev');
+
+  currentName = stations[target].name;
+  render();
+}
+
 function render() {
   fill($('guild'), data.guilds.map(g => [g.id, g.name]));
   const g = data.guilds.find(x => x.id === $('guild').value);
@@ -555,39 +806,7 @@ function render() {
   if (g?.channelId) $('channel').value = g.channelId;
 
   const stations = g?.stations || [];
-  const icons = { drive: '☁️', file: '🎵' };
-  fill($('station'), stations.map(s => [s.name, (s.locked ? '🔒 ' : '') + s.name + ' (' + s.items.length + ')']));
-
-  const st = stations.find(s => s.name === $('station').value);
-  $('stlist').hidden = !stations.length;
-  $('stempty').hidden = stations.length > 0;
-  $('stadd').hidden = !st;
-  $('stloopl').hidden = !stations.length;
-  if (!stations.length) { showList = false; $('stdelbox').hidden = true; }
-  if (lastStation !== $('station').value) {
-    lastStation = $('station').value;
-    showList = false;
-    $('stdelbox').hidden = true;
-    $('stpw').value = '';
-  }
-  $('stitems').hidden = !showList;
-  $('stshow').textContent = showList ? 'Masquer la liste' : 'Afficher la liste' + (st ? ' (' + st.items.length + ')' : '');
-
-  const sig = JSON.stringify(st || null);
-  if ($('stitems').dataset.sig !== sig) {
-    $('stitems').dataset.sig = sig;
-    $('stitems').replaceChildren(...(st?.items || []).map((item, index) => {
-      const li = document.createElement('li');
-      li.append((icons[item.type] || '•') + ' ' + item.label);
-      const rm = document.createElement('button');
-      rm.className = 'ghost rm';
-      rm.textContent = '✕';
-      rm.title = 'Retirer';
-      rm.onclick = () => removeItem(st.name, index);
-      li.append(rm);
-      return li;
-    }));
-  }
+  renderStations(g, stations);
 
   if (Date.now() - volTouched > 4000) $('vol').value = g?.volume ?? 100;
   $('voltxt').textContent = '🔊 ' + $('vol').value + '%';
@@ -684,7 +903,7 @@ async function refresh() {
 async function act(fn) {
   const buttons = document.querySelectorAll('button');
   buttons.forEach(b => b.disabled = true);
-  msg('⏳ Ajout en cours…');
+  msg('⏳ En cours…');
   try {
     msg(await fn() || '');
   } catch (error) {
@@ -718,6 +937,8 @@ async function uploadMany(input, urlFor) {
 }
 
 const ctx = () => ({ guildId: $('guild').value, channelId: $('channel').value });
+const stationsNow = () => data.guilds.find(x => x.id === $('guild').value)?.stations || [];
+const stationNow = () => stationsNow().find(s => s.name === currentName) || null;
 
 $('dr').onclick = () => act(async () => {
   const result = await api('/api/play', post({ ...ctx(), source: 'url', value: $('drurl').value }));
@@ -731,40 +952,104 @@ $('file').onchange = () => act(async () => {
 });
 
 $('stplay').onclick = () => act(async () =>
-  (await api('/api/play', post({ ...ctx(), source: 'station', value: $('station').value, loop: $('stloop').checked }))).message);
+  (await api('/api/play', post({ ...ctx(), source: 'station', value: currentName, loop: $('stloop').checked }))).message);
+
+// Navigation : flèches et glissement du doigt
+$('plprev').onclick = () => go(-1);
+$('plnext').onclick = () => go(1);
+
+let touchX = null;
+$('plview').addEventListener('touchstart', event => { touchX = event.touches[0].clientX; }, { passive: true });
+$('plview').addEventListener('touchend', event => {
+  if (touchX === null) return;
+  const dx = event.changedTouches[0].clientX - touchX;
+  touchX = null;
+  if (Math.abs(dx) > 60) go(dx < 0 ? 1 : -1);
+});
+
+// Actions protégées par le mot de passe de la playlist
+function askPassword(kind, title) {
+  const st = stationNow();
+  if (!st) return;
+  if (!st.locked) return runWithPassword(kind, '');
+
+  pendingKind = kind;
+  $('stpwtitle').textContent = title + ' « ' + st.name + ' »';
+  $('stpwok').className = kind === 'delete' ? 'del' : 'main';
+  $('stpwbox').hidden = false;
+  $('stpw').value = '';
+  $('stpw').focus();
+}
+
+function runWithPassword(kind, password) {
+  const st = stationNow();
+  if (!st) return;
+  const guildId = $('guild').value;
+  const name = st.name;
+
+  if (kind === 'show') {
+    return act(async () => {
+      const result = await api('/api/station/items', post({ guildId, name, password }));
+      unlocked = { name, password, items: result.items || [] };
+      showList = true;
+      return '';
+    });
+  }
+
+  if (kind === 'delete') {
+    if (!confirm('Supprimer la playlist « ' + name + ' » ?')) return;
+    return act(async () => {
+      const result = await api('/api/station/delete', post({ guildId, name, password }));
+      unlocked = null;
+      showList = false;
+      return result.message;
+    });
+  }
+
+  if (kind === 'current') {
+    return act(async () => {
+      const result = await api('/api/station/add-current', post({ guildId, name, password }));
+      if (showList && unlocked && unlocked.name === name) {
+        unlocked.items = (await api('/api/station/items', post({ guildId, name, password: unlocked.password }))).items || [];
+      }
+      return result.message;
+    });
+  }
+}
 
 $('stshow').onclick = () => {
-  showList = !showList;
-  render();
+  if (showList && unlocked) {
+    showList = false;
+    unlocked = null;
+    render();
+    return;
+  }
+  askPassword('show', 'Mot de passe pour afficher la liste de');
 };
 
-$('stdel').onclick = () => {
-  if (!$('station').value) return;
-  $('stdelbox').hidden = false;
-  $('stpw').focus();
+$('stdel').onclick = () => askPassword('delete', 'Mot de passe pour supprimer');
+$('stcur').onclick = () => askPassword('current', 'Mot de passe pour ajouter le morceau en cours à');
+$('stpwno').onclick = closePrompt;
+
+$('stpwok').onclick = () => {
+  const password = $('stpw').value;
+  const kind = pendingKind;
+  if (!kind || !password) return;
+  closePrompt();
+  runWithPassword(kind, password);
 };
 
-$('stdelno').onclick = () => {
-  $('stpw').value = '';
-  $('stdelbox').hidden = true;
-};
-
-$('stdelok').onclick = () => {
-  const name = $('station').value;
-  if (!name || !$('stpw').value) return;
-  if (!confirm('Supprimer la playlist « ' + name + ' » ?')) return;
-  act(async () => {
-    const result = await api('/api/station/delete', post({ guildId: $('guild').value, name, password: $('stpw').value }));
-    $('stpw').value = '';
-    $('stdelbox').hidden = true;
-    return result.message;
-  });
+$('stpw').onkeydown = event => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    $('stpwok').click();
+  }
 };
 
 $('stlinkbtn').onclick = () => act(async () => {
   const result = await api('/api/station/add', post({
     guildId: $('guild').value,
-    name: $('station').value,
+    name: currentName,
     source: $('stlink').value
   }));
   $('stlink').value = '';
@@ -772,7 +1057,7 @@ $('stlinkbtn').onclick = () => act(async () => {
 });
 
 $('stfile').onchange = () => act(async () => {
-  const base = { guildId: $('guild').value, name: $('station').value };
+  const base = { guildId: $('guild').value, name: currentName };
   return uploadMany($('stfile'), file => '/api/station/upload?' + new URLSearchParams({ ...base, file }));
 });
 
@@ -837,8 +1122,6 @@ $('qsavebtn').onclick = () => act(async () => {
   return result.message;
 });
 
-$('station').onchange = render;
-
 $('loop').onclick = () => {
   const g = data.guilds.find(x => x.id === $('guild').value);
   act(async () => {
@@ -881,8 +1164,137 @@ $('login').onsubmit = async event => {
   }
 };
 
+// ======================================
+// MODE APERÇU : données fictives, aucun appel au bot
+// ======================================
+
+function startDemo() {
+  demo = true;
+  const mk = labels => labels.map(label => ({ type: 'file', label }));
+
+  demoItems = {
+    'THIVALIN': mk(['Kemyrah - Voarara', 'F_S_C - Namela Mamy', 'Ambiance Tropicale', 'Soirée Zouk', 'Acoustique du matin']),
+    'Soirée Lounge': mk(['Jazz du soir', 'Lo-fi beats', 'Deep House Mix', 'Bossa Nova']),
+    'Sport & Énergie': mk(['Cardio Mix 1', 'Cardio Mix 2', 'Remix Gym', 'Power Hour'])
+  };
+
+  demoState = { guilds: [{
+    id: 'demo',
+    name: 'Serveur démo',
+    channels: [{ id: 'c1', name: '🎧 Salon musique' }, { id: 'c2', name: '🔊 Général' }],
+    channelId: 'c1',
+    current: 'Kemyrah - Voarara',
+    volume: 80,
+    paused: false,
+    queue: ['F_S_C - Namela Mamy', 'Ambiance Tropicale', 'Jazz du soir', 'Lo-fi beats'],
+    station: 'THIVALIN',
+    loop: true,
+    stations: Object.keys(demoItems).map(name => ({ name, locked: true, count: demoItems[name].length }))
+  }] };
+
+  $('pvbar').hidden = false;
+  show(true);
+  refresh();
+}
+
+async function demoApi(url, opts) {
+  const u = new URL(url, location.href);
+  const body = typeof opts.body === 'string' ? JSON.parse(opts.body) : {};
+  const g = demoState.guilds[0];
+  const sync = () => g.stations.forEach(st => { st.count = (demoItems[st.name] || []).length; });
+  const checkPassword = () => {
+    if (body.password !== 'demo') throw new Error('Mot de passe incorrect (aperçu : utilise « demo »).');
+  };
+  const simulated = { message: '👁 Aperçu : action simulée.' };
+
+  switch (u.pathname) {
+    case '/api/state':
+      sync();
+      return JSON.parse(JSON.stringify(demoState));
+
+    case '/api/soundboard':
+      if (opts.method === 'POST') return simulated;
+      return { sounds: [
+        { id: 's1', name: 'Applaudissements', emoji: '👏' },
+        { id: 's2', name: 'Klaxon', emoji: '📣' },
+        { id: 's3', name: 'Tambour', emoji: '🥁' }
+      ] };
+
+    case '/api/station/items':
+      checkPassword();
+      return { items: JSON.parse(JSON.stringify(demoItems[body.name] || [])) };
+
+    case '/api/station/remove-item':
+      checkPassword();
+      (demoItems[body.name] || []).splice(body.index, 1);
+      sync();
+      return { message: '🗑️ Morceau retiré de la playlist.' };
+
+    case '/api/station/delete':
+      checkPassword();
+      g.stations = g.stations.filter(st => st.name !== body.name);
+      delete demoItems[body.name];
+      return { message: '🗑️ Playlist supprimée.' };
+
+    case '/api/station':
+      demoItems[body.name] = [];
+      g.stations.push({ name: body.name, locked: true, count: 0 });
+      sync();
+      return { message: '✅ Playlist « ' + body.name + ' » créée.' };
+
+    case '/api/station/add-current':
+      checkPassword();
+      (demoItems[body.name] ||= []).push({ type: 'file', label: g.current || 'Morceau' });
+      sync();
+      return { message: '✅ ' + g.current + ' ajouté à ' + body.name + '.' };
+
+    case '/api/station/add':
+      (demoItems[body.name] ||= []).push({ type: 'drive', label: 'Lien Google Drive' });
+      sync();
+      return { message: '✅ Lien ajouté à ' + body.name + '.' };
+
+    case '/api/queue/save':
+      for (const name of body.playlists || []) {
+        if ((body.passwords || {})[name] !== 'demo') {
+          throw new Error(name + ' : mot de passe incorrect (aperçu : utilise « demo »).');
+        }
+      }
+      return { message: '✅ ' + (body.items || []).length + ' ajout(s) dans les playlists.' };
+
+    case '/api/control':
+      if (body.action === 'pause') g.paused = true;
+      if (body.action === 'resume') g.paused = false;
+      if (body.action === 'loop-on') g.loop = true;
+      if (body.action === 'loop-off') g.loop = false;
+      if (body.action === 'skip') g.current = g.queue.shift() || null;
+      if (body.action === 'stop') { g.current = null; g.queue = []; }
+      return { ok: true };
+
+    case '/api/volume':
+      g.volume = body.volume;
+      return { message: '' };
+
+    default:
+      return simulated;
+  }
+}
+
+$('preview').onclick = startDemo;
+
+$('pvquit').onclick = () => {
+  if (location.pathname === '/preview') {
+    location.href = '/';
+    return;
+  }
+  demo = false;
+  $('pvbar').hidden = true;
+  show(false);
+};
+
 setInterval(() => { if (!$('app').hidden) refresh(); }, 3000);
-refresh();
+
+if (location.pathname === '/preview' || /[?&]preview\b/.test(location.search)) startDemo();
+else refresh();
 </script>
 </body>
 </html>

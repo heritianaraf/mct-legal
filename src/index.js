@@ -18,7 +18,8 @@ const {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-  ActionRowBuilder
+  ActionRowBuilder,
+  ActivityType
 } = require('discord.js');
 
 const { startWeb } = require('./web');
@@ -862,7 +863,7 @@ const botApi = {
         stations: guildStations(guild.id).map(s => ({
           name: s.name,
           locked: Boolean(s.password),
-          items: s.items.map(item => ({ type: item.type, label: item.label }))
+          count: s.items.length
         }))
       };
     });
@@ -953,10 +954,33 @@ const botApi = {
     return `✅ ${result.label} ajouté à ${station.name}.${result.info.includes('⚠️') ? ' ' + result.info : ''}`;
   },
 
-  removeStationItem(guildId, name, index) {
+  stationItems(guildId, name, password) {
     assertGuild(guildId);
-    const removed = removeStationItem(String(guildId), name, index);
+    const station = findStation(String(guildId), name);
+    if (!station) throw new Error('Playlist introuvable.');
+    assertStationPassword(station, password, 'web');
+    return station.items.map(item => ({ type: item.type, label: item.label }));
+  },
+  removeStationItem(guildId, name, index, password) {
+    assertGuild(guildId);
+    const station = findStation(String(guildId), name);
+    if (!station) throw new Error('Playlist introuvable.');
+    assertStationPassword(station, password, 'web');
+    const removed = removeStationItem(String(guildId), station.name, index);
     return `🗑️ ${removed.label} retiré de la playlist.`;
+  },
+  async saveCurrentToStation(guildId, name, password) {
+    assertGuild(guildId);
+    const station = findStation(String(guildId), name);
+    if (!station) throw new Error('Playlist introuvable.');
+    assertStationPassword(station, password, 'web');
+
+    const track = queues.get(String(guildId))?.current;
+    if (!track) throw new Error('Aucun morceau en cours de lecture.');
+
+    const { done, notes } = await saveTracksToStations(String(guildId), [track], [station.name]);
+    if (!done) throw new Error(notes.slice(0, 3).join('\n') || 'Rien n’a été ajouté.');
+    return [`✅ ${track.name} ajouté à ${station.name}.`, ...notes.slice(0, 3)].join('\n');
   },
 
   // Enregistre des morceaux de la file dans une ou plusieurs playlists.
@@ -1540,6 +1564,22 @@ async function saveUploadStream(stream, originalName) {
   return tmpPath;
 }
 
+function passwordModal(customId, title, stationName) {
+  return new ModalBuilder()
+    .setCustomId(customId)
+    .setTitle(title)
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('password')
+          .setLabel(`Mot de passe de « ${stationName.slice(0, 30)} »`)
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(100)
+      )
+    );
+}
+
 function removeStationItem(guildId, name, index) {
   let removed;
 
@@ -1688,6 +1728,34 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.editReply(`🗑️ Playlist **${station.name}** supprimée.`);
     }
 
+    // Validation du formulaire « afficher la playlist »
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('station-list:')) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+      const station = findStation(interaction.guildId, interaction.customId.slice('station-list:'.length));
+      if (!station) throw new Error('Playlist introuvable.');
+
+      assertStationPassword(station, interaction.fields.getTextInputValue('password'), interaction.user.id);
+
+      const lines = station.items.map(itemLine);
+      return interaction.editReply(`📻 **${station.name}**\n\n${lines.join('\n') || 'Playlist vide.'}`.slice(0, 1950));
+    }
+
+    // Validation du formulaire « retirer un morceau »
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('station-remove:')) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+      const rest = interaction.customId.slice('station-remove:'.length);
+      const cut = rest.indexOf(':');
+      const station = findStation(interaction.guildId, rest.slice(cut + 1));
+      if (!station) throw new Error('Playlist introuvable.');
+
+      assertStationPassword(station, interaction.fields.getTextInputValue('password'), interaction.user.id);
+
+      const removed = removeStationItem(interaction.guildId, station.name, Number(rest.slice(0, cut)));
+      return interaction.editReply(`🗑️ **${removed.label}** retiré de **${station.name}**.`);
+    }
+
     if (!interaction.isChatInputCommand() || interaction.commandName !== 'station') return;
 
     const guildId = interaction.guildId;
@@ -1751,6 +1819,13 @@ client.on(Events.InteractionCreate, async interaction => {
           return interaction.reply({ content: '❌ Playlist introuvable.', flags: MessageFlags.Ephemeral });
         }
 
+        // Le contenu d'une playlist protégée n'est montré qu'avec son mot de passe.
+        if (station.password) {
+          return interaction.showModal(
+            passwordModal(`station-list:${station.name}`, 'Afficher la playlist', station.name)
+          );
+        }
+
         const lines = station.items.map(itemLine);
         return interaction.reply({
           content: `📻 **${station.name}**\n\n${lines.join('\n') || 'Playlist vide.'}`.slice(0, 1950),
@@ -1805,7 +1880,15 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ content: '❌ Playlist introuvable.', flags: MessageFlags.Ephemeral });
       }
 
-      const removed = removeStationItem(guildId, station.name, interaction.options.getInteger('numero') - 1);
+      const position = interaction.options.getInteger('numero') - 1;
+
+      if (station.password) {
+        return interaction.showModal(
+          passwordModal(`station-remove:${position}:${station.name}`, 'Retirer un morceau', station.name)
+        );
+      }
+
+      const removed = removeStationItem(guildId, station.name, position);
       return interaction.reply({
         content: `🗑️ **${removed.label}** retiré de **${station.name}**.`,
         flags: MessageFlags.Ephemeral
@@ -2161,10 +2244,37 @@ async function deleteFileBackup(stored) {
 }
 
 // ======================================
+// STATUT DU BOT : affiche la musique en cours sous son nom
+// ======================================
+
+let lastPresence = null;
+
+function updatePresence() {
+  if (!client.isReady()) return;
+
+  let name = null;
+  for (const state of queues.values()) {
+    if (state.current?.name) {
+      name = String(state.current.name).slice(0, 120);
+      break;
+    }
+  }
+
+  if (name === lastPresence) return;
+  lastPresence = name;
+
+  client.user.setPresence({
+    activities: name ? [{ name, type: ActivityType.Listening }] : [],
+    status: 'online'
+  });
+}
+
+// ======================================
 // DÉMARRAGE
 // ======================================
 
 client.once(Events.ClientReady, async readyClient => {
+  setInterval(updatePresence, 5000);
   await restoreBackup();
   await restoreMissingFiles();
   console.log('================================');

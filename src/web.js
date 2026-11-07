@@ -62,7 +62,7 @@ function startWeb(bot) {
     const url = new URL(req.url, 'http://localhost');
 
     try {
-      if (req.method === 'GET' && url.pathname === '/') {
+      if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/preview')) {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
         return res.end(fs.readFileSync(path.join(__dirname, 'dashboard.html')));
       }
@@ -158,8 +158,18 @@ function startWeb(bot) {
       }
 
       if (url.pathname === '/api/station/remove-item' && req.method === 'POST') {
-        const { guildId, name, index } = await readJson(req);
-        return send(res, 200, { message: bot.removeStationItem(guildId, name, index) });
+        const { guildId, name, index, password } = await readJson(req);
+        return send(res, 200, { message: bot.removeStationItem(guildId, name, index, password) });
+      }
+
+      if (url.pathname === '/api/station/items' && req.method === 'POST') {
+        const { guildId, name, password } = await readJson(req);
+        return send(res, 200, { items: bot.stationItems(guildId, name, password) });
+      }
+
+      if (url.pathname === '/api/station/add-current' && req.method === 'POST') {
+        const { guildId, name, password } = await readJson(req);
+        return send(res, 200, { message: await bot.saveCurrentToStation(guildId, name, password) });
       }
 
       if (url.pathname === '/api/station/upload' && req.method === 'PUT') {
