@@ -129,6 +129,11 @@ button:hover,
     opacity: .85;
 }
 
+button:disabled {
+    opacity: .5;
+    cursor: wait;
+}
+
 .now {
     font-size: 1.4rem;
     margin: 0 0 12px;
@@ -253,8 +258,8 @@ input[type="file"] {
           <button id="add" class="main">Ajouter</button>
         </div>
         <div class="row">
-          <input id="spurl" type="text" placeholder="Lien Spotify (morceau, album, playlist)">
-          <button id="sp" class="main">Chercher</button>
+          <input id="spurl" type="text" placeholder="Lien Spotify (morceau, album ou playlist)">
+          <button id="sp" class="main">Ajouter</button>
         </div>
         <div class="row">
           <input id="drurl" type="text" placeholder="Lien Google Drive (MP3 ou dossier)">
@@ -343,11 +348,15 @@ async function refresh() {
 }
 
 async function act(fn) {
+  const buttons = document.querySelectorAll('button');
+  buttons.forEach(b => b.disabled = true);
+  msg('⏳ Ajout en cours…');
   try {
     msg(await fn() || '');
   } catch (error) {
     msg(error.message, true);
   }
+  buttons.forEach(b => b.disabled = false);
   refresh();
 }
 
