@@ -660,6 +660,14 @@ function assertGuild(guildId) {
 }
 
 const botApi = {
+  passwordSet: hasPlaylistPassword,
+
+  setPlaylistPassword(newPassword, oldPassword) {
+    const existed = hasPlaylistPassword();
+    setPlaylistPassword(newPassword, oldPassword, 'web');
+    return existed ? '🔒 Mot de passe modifié.' : '🔒 Mot de passe créé.';
+  },
+
   getState() {
     return client.guilds.cache.map(guild => {
       const state = queues.get(guild.id);
@@ -1090,12 +1098,26 @@ fs.mkdirSync(PLAYLIST_DIR, { recursive: true });
 // MOT DE PASSE (créer / supprimer une playlist)
 // ======================================
 
-const PLAYLIST_PASSWORD = (process.env.PLAYLIST_PASSWORD || '').trim();
+const PASSWORD_FILE = path.join(MUSIC_DIR, '..', 'playlist-password.json');
 const passwordFails = new Map();
 
+const hashPassword = (password, salt) => crypto.scryptSync(String(password), salt, 64);
+
+function loadPasswordRecord() {
+  try {
+    const { salt, hash } = JSON.parse(fs.readFileSync(PASSWORD_FILE, 'utf8'));
+    return { salt: Buffer.from(salt, 'hex'), hash: Buffer.from(hash, 'hex') };
+  } catch {
+    return null;
+  }
+}
+
+const hasPlaylistPassword = () => Boolean(loadPasswordRecord());
+
 function assertPlaylistPassword(given, key) {
-  if (!PLAYLIST_PASSWORD) {
-    throw new Error('Définis PLAYLIST_PASSWORD dans .env pour créer ou supprimer une playlist.');
+  const record = loadPasswordRecord();
+  if (!record) {
+    throw new Error('Aucun mot de passe défini : crée-le d’abord dans le dashboard (carte Playlists).');
   }
 
   const entry = passwordFails.get(key);
@@ -1105,9 +1127,7 @@ function assertPlaylistPassword(given, key) {
     throw new Error('Trop d’essais, réessaie dans quelques minutes.');
   }
 
-  const hash = value => crypto.createHash('sha256').update(String(value ?? '')).digest();
-
-  if (!crypto.timingSafeEqual(hash(given), hash(PLAYLIST_PASSWORD))) {
+  if (!crypto.timingSafeEqual(hashPassword(given ?? '', record.salt), record.hash)) {
     passwordFails.set(key, {
       count: (active ? entry.count : 0) + 1,
       reset: active ? entry.reset : Date.now() + 10 * 60 * 1000
@@ -1116,6 +1136,27 @@ function assertPlaylistPassword(given, key) {
   }
 
   passwordFails.delete(key);
+}
+
+// Crée le mot de passe (première fois) ou le change (ancien mot de passe requis).
+function setPlaylistPassword(newPassword, oldPassword, key) {
+  const value = String(newPassword ?? '');
+
+  if (value.length < 4 || value.length > 100) {
+    throw new Error('Le mot de passe doit faire entre 4 et 100 caractères.');
+  }
+
+  if (hasPlaylistPassword()) assertPlaylistPassword(oldPassword, key);
+
+  const salt = crypto.randomBytes(16);
+  const tmp = `${PASSWORD_FILE}.tmp`;
+
+  fs.writeFileSync(
+    tmp,
+    JSON.stringify({ salt: salt.toString('hex'), hash: hashPassword(value, salt).toString('hex') }),
+    { mode: 0o600 }
+  );
+  fs.renameSync(tmp, PASSWORD_FILE);
 }
 
 const sameName = (a, b) => String(a).toLowerCase().trim() === String(b).toLowerCase().trim();
@@ -1450,6 +1491,13 @@ client.on(Events.InteractionCreate, async interaction => {
     const sub = interaction.options.getSubcommand();
 
     if (sub === 'creer') {
+      if (!hasPlaylistPassword()) {
+        return interaction.reply({
+          content: '🔒 Aucun mot de passe défini. Crée-le d’abord dans le dashboard (carte Playlists).',
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
       const modal = new ModalBuilder()
         .setCustomId('station-create')
         .setTitle('Créer une nouvelle station')
@@ -1576,6 +1624,13 @@ client.on(Events.InteractionCreate, async interaction => {
       const station = findStation(guildId, interaction.options.getString('nom'));
       if (!station) {
         return interaction.reply({ content: '❌ Playlist introuvable.', flags: MessageFlags.Ephemeral });
+      }
+
+      if (!hasPlaylistPassword()) {
+        return interaction.reply({
+          content: '🔒 Aucun mot de passe défini. Crée-le d’abord dans le dashboard (carte Playlists).',
+          flags: MessageFlags.Ephemeral
+        });
       }
 
       const modal = new ModalBuilder()

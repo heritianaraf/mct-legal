@@ -208,6 +208,12 @@ input[type="file"] {
     display: none;
 }
 
+summary {
+    cursor: pointer;
+    color: var(--mut);
+    font: .9rem system-ui, sans-serif;
+}
+
 [hidden] {
     display: none !important;
 }
@@ -287,7 +293,26 @@ input[type="file"] {
     <div class="card">
       <h2>Playlists</h2>
       <div class="stack">
-        <input id="stpw" type="password" placeholder="Mot de passe (pour créer ou supprimer une playlist)" autocomplete="off">
+        <div id="pwsetup" class="stack" hidden>
+          <p class="sub">Aucun mot de passe : crée-le pour pouvoir créer ou supprimer des playlists.</p>
+          <div class="row">
+            <input id="pwnew" type="password" placeholder="Nouveau mot de passe (4 caractères min.)" autocomplete="new-password">
+            <input id="pwnew2" type="password" placeholder="Confirmer" autocomplete="new-password">
+            <button id="pwsave" class="main">Créer le mot de passe</button>
+          </div>
+        </div>
+        <div id="pwuse" class="stack" hidden>
+          <input id="stpw" type="password" placeholder="Mot de passe (pour créer ou supprimer une playlist)" autocomplete="off">
+          <details>
+            <summary>Changer le mot de passe</summary>
+            <div class="row sep">
+              <input id="pwold" type="password" placeholder="Ancien mot de passe" autocomplete="off">
+              <input id="pwchg" type="password" placeholder="Nouveau" autocomplete="new-password">
+              <input id="pwchg2" type="password" placeholder="Confirmer" autocomplete="new-password">
+              <button id="pwchgbtn" class="ghost">Changer</button>
+            </div>
+          </details>
+        </div>
         <div class="row" id="stlist">
           <select id="station" aria-label="Playlist"></select>
           <button id="stplay" class="main">Lancer</button>
@@ -380,6 +405,9 @@ function queueAction(index, name, action) {
 }
 
 function render() {
+  $('pwsetup').hidden = Boolean(data.passwordSet);
+  $('pwuse').hidden = !data.passwordSet;
+
   fill($('guild'), data.guilds.map(g => [g.id, g.name]));
   const g = data.guilds.find(x => x.id === $('guild').value);
 
@@ -572,6 +600,24 @@ $('stnew').onclick = () => act(async () => {
   $('stname').value = '';
   return result.message;
 });
+
+function savePassword(oldId, newId, confirmId) {
+  act(async () => {
+    const next = $(newId).value;
+    if (next !== $(confirmId).value) throw new Error('Les deux mots de passe ne correspondent pas.');
+
+    const result = await api('/api/playlist-password', post({
+      oldPassword: oldId ? $(oldId).value : '',
+      newPassword: next
+    }));
+
+    [oldId, newId, confirmId].filter(Boolean).forEach(id => { $(id).value = ''; });
+    return result.message;
+  });
+}
+
+$('pwsave').onclick = () => savePassword(null, 'pwnew', 'pwnew2');
+$('pwchgbtn').onclick = () => savePassword('pwold', 'pwchg', 'pwchg2');
 
 $('qall').onclick = () => {
   const g = data.guilds.find(x => x.id === $('guild').value);
