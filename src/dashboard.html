@@ -406,18 +406,27 @@ summary {
     background: var(--pink);
 }
 
-.pvbar {
+.card-head {
     display: flex;
-    gap: 10px;
     align-items: center;
     justify-content: space-between;
-    flex-wrap: wrap;
-    padding: 10px 16px;
-    margin-bottom: 16px;
-    border-radius: 999px;
-    border: 1px solid rgba(255, 122, 69, .5);
-    background: rgba(255, 122, 69, .12);
-    font-size: .82rem;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.card-head h2 {
+    margin: 0;
+}
+
+.card.collapsed .card-head {
+    margin-bottom: 0;
+}
+
+button.toggle {
+    padding: 6px 12px;
+    font-size: .75rem;
+    width: auto;
+    flex: none;
 }
 
 [hidden] {
@@ -451,19 +460,11 @@ summary {
             Se connecter
         </button>
 
-        <button type="button" id="preview" class="ghost">
-            👁 Aperçu du dashboard
-        </button>
-
         <div id="lerr" class="sub" role="alert"></div>
 
     </form>
 
   <div id="app" hidden>
-    <div id="pvbar" class="pvbar" hidden>
-      <span>👁 Mode aperçu : données fictives, rien n’est envoyé au bot. Mot de passe des playlists : <b>demo</b></span>
-      <button type="button" id="pvquit" class="ghost">Quitter l’aperçu</button>
-    </div>
     <img
     src="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"
     alt="MCT Music Player"
@@ -472,18 +473,28 @@ summary {
     <h1>MCT<span>·</span>MUSIC</h1>
     <p class="sub">Pilote le bot depuis ton navigateur.</p>
 
-    <div class="card">
-      <h2>Destination</h2>
-      <div class="row">
-        <select id="guild" aria-label="Serveur"></select>
-        <select id="channel" aria-label="Salon vocal"></select>
+    <div class="card" id="card-dest">
+      <div class="card-head">
+        <h2>Destination</h2>
+        <button type="button" class="ghost toggle" data-toggle="dest" aria-expanded="true">Masquer</button>
+      </div>
+      <div id="body-dest">
+        <div class="row">
+          <select id="guild" aria-label="Serveur"></select>
+          <select id="channel" aria-label="Salon vocal"></select>
+        </div>
       </div>
     </div>
 
-    <div class="card">
-      <h2>En cours</h2>
+    <div class="card" id="card-now">
+      <div class="card-head">
+        <h2>En cours</h2>
+        <button type="button" class="ghost toggle" data-toggle="now" aria-expanded="true">Masquer</button>
+      </div>
+      <div id="body-now">
       <p class="now" id="now">Rien en lecture</p>
       <div class="row">
+        <button id="prev" class="ghost">⏮ Précédent</button>
         <button id="pause" class="ghost">⏸ Pause</button>
         <button id="resume" class="ghost">▶ Reprendre</button>
         <button id="skip" class="ghost">⏭ Suivant</button>
@@ -493,6 +504,7 @@ summary {
       <div class="vol">
         <span id="voltxt">🔊 100%</span>
         <input id="vol" type="range" min="0" max="200" step="5" value="100" aria-label="Volume">
+      </div>
       </div>
     </div>
 
@@ -623,12 +635,7 @@ let unlocked = null;        // { name, password, items } : liste déverrouillée
 let currentName = null;     // playlist affichée dans le menu glissant
 let lastStation = null;
 let pendingKind = null;     // action qui attend le mot de passe : show | delete | current
-let demo = false;           // mode aperçu (données fictives)
-let demoState = null;
-let demoItems = {};
-
 async function api(url, opts = {}) {
-  if (demo) return demoApi(url, opts);
   const res = await fetch(url, opts);
   const json = await res.json().catch(() => ({}));
   if (res.status === 401 && url !== '/api/login') {
@@ -812,6 +819,8 @@ function render() {
   $('voltxt').textContent = '🔊 ' + $('vol').value + '%';
 
   $('now').textContent = g?.current ? (g.paused ? '⏸ ' : '▶ ') + g.current : 'Rien en lecture';
+
+  $('prev').disabled = !g?.canPrevious;
 
   $('loop').hidden = !g?.station;
   $('loop').textContent = g?.loop ? '🔁 Boucle activée' : '🔁 Boucle désactivée';
@@ -1129,8 +1138,9 @@ $('loop').onclick = () => {
   });
 };
 
-['pause', 'resume', 'skip', 'stop'].forEach(action => {
-  $(action).onclick = () => act(async () => {
+['prev', 'pause', 'resume', 'skip', 'stop'].forEach(id => {
+  const action = id === 'prev' ? 'previous' : id;
+  $(id).onclick = () => act(async () => {
     await api('/api/control', post({ guildId: $('guild').value, action }));
   });
 });
@@ -1164,137 +1174,26 @@ $('login').onsubmit = async event => {
   }
 };
 
-// ======================================
-// MODE APERÇU : données fictives, aucun appel au bot
-// ======================================
-
-function startDemo() {
-  demo = true;
-  const mk = labels => labels.map(label => ({ type: 'file', label }));
-
-  demoItems = {
-    'THIVALIN': mk(['Kemyrah - Voarara', 'F_S_C - Namela Mamy', 'Ambiance Tropicale', 'Soirée Zouk', 'Acoustique du matin']),
-    'Soirée Lounge': mk(['Jazz du soir', 'Lo-fi beats', 'Deep House Mix', 'Bossa Nova']),
-    'Sport & Énergie': mk(['Cardio Mix 1', 'Cardio Mix 2', 'Remix Gym', 'Power Hour'])
-  };
-
-  demoState = { guilds: [{
-    id: 'demo',
-    name: 'Serveur démo',
-    channels: [{ id: 'c1', name: '🎧 Salon musique' }, { id: 'c2', name: '🔊 Général' }],
-    channelId: 'c1',
-    current: 'Kemyrah - Voarara',
-    volume: 80,
-    paused: false,
-    queue: ['F_S_C - Namela Mamy', 'Ambiance Tropicale', 'Jazz du soir', 'Lo-fi beats'],
-    station: 'THIVALIN',
-    loop: true,
-    stations: Object.keys(demoItems).map(name => ({ name, locked: true, count: demoItems[name].length }))
-  }] };
-
-  $('pvbar').hidden = false;
-  show(true);
-  refresh();
+// Sections repliables (Destination / En cours), mémorisées dans le navigateur
+function setSection(key, open) {
+  $('body-' + key).hidden = !open;
+  $('card-' + key).classList.toggle('collapsed', !open);
+  const btn = document.querySelector('[data-toggle="' + key + '"]');
+  btn.textContent = open ? 'Masquer' : 'Afficher';
+  btn.setAttribute('aria-expanded', String(open));
+  try { localStorage.setItem('mct-section-' + key, open ? '1' : '0'); } catch {}
 }
 
-async function demoApi(url, opts) {
-  const u = new URL(url, location.href);
-  const body = typeof opts.body === 'string' ? JSON.parse(opts.body) : {};
-  const g = demoState.guilds[0];
-  const sync = () => g.stations.forEach(st => { st.count = (demoItems[st.name] || []).length; });
-  const checkPassword = () => {
-    if (body.password !== 'demo') throw new Error('Mot de passe incorrect (aperçu : utilise « demo »).');
-  };
-  const simulated = { message: '👁 Aperçu : action simulée.' };
-
-  switch (u.pathname) {
-    case '/api/state':
-      sync();
-      return JSON.parse(JSON.stringify(demoState));
-
-    case '/api/soundboard':
-      if (opts.method === 'POST') return simulated;
-      return { sounds: [
-        { id: 's1', name: 'Applaudissements', emoji: '👏' },
-        { id: 's2', name: 'Klaxon', emoji: '📣' },
-        { id: 's3', name: 'Tambour', emoji: '🥁' }
-      ] };
-
-    case '/api/station/items':
-      checkPassword();
-      return { items: JSON.parse(JSON.stringify(demoItems[body.name] || [])) };
-
-    case '/api/station/remove-item':
-      checkPassword();
-      (demoItems[body.name] || []).splice(body.index, 1);
-      sync();
-      return { message: '🗑️ Morceau retiré de la playlist.' };
-
-    case '/api/station/delete':
-      checkPassword();
-      g.stations = g.stations.filter(st => st.name !== body.name);
-      delete demoItems[body.name];
-      return { message: '🗑️ Playlist supprimée.' };
-
-    case '/api/station':
-      demoItems[body.name] = [];
-      g.stations.push({ name: body.name, locked: true, count: 0 });
-      sync();
-      return { message: '✅ Playlist « ' + body.name + ' » créée.' };
-
-    case '/api/station/add-current':
-      checkPassword();
-      (demoItems[body.name] ||= []).push({ type: 'file', label: g.current || 'Morceau' });
-      sync();
-      return { message: '✅ ' + g.current + ' ajouté à ' + body.name + '.' };
-
-    case '/api/station/add':
-      (demoItems[body.name] ||= []).push({ type: 'drive', label: 'Lien Google Drive' });
-      sync();
-      return { message: '✅ Lien ajouté à ' + body.name + '.' };
-
-    case '/api/queue/save':
-      for (const name of body.playlists || []) {
-        if ((body.passwords || {})[name] !== 'demo') {
-          throw new Error(name + ' : mot de passe incorrect (aperçu : utilise « demo »).');
-        }
-      }
-      return { message: '✅ ' + (body.items || []).length + ' ajout(s) dans les playlists.' };
-
-    case '/api/control':
-      if (body.action === 'pause') g.paused = true;
-      if (body.action === 'resume') g.paused = false;
-      if (body.action === 'loop-on') g.loop = true;
-      if (body.action === 'loop-off') g.loop = false;
-      if (body.action === 'skip') g.current = g.queue.shift() || null;
-      if (body.action === 'stop') { g.current = null; g.queue = []; }
-      return { ok: true };
-
-    case '/api/volume':
-      g.volume = body.volume;
-      return { message: '' };
-
-    default:
-      return simulated;
-  }
-}
-
-$('preview').onclick = startDemo;
-
-$('pvquit').onclick = () => {
-  if (location.pathname === '/preview') {
-    location.href = '/';
-    return;
-  }
-  demo = false;
-  $('pvbar').hidden = true;
-  show(false);
-};
+['dest', 'now'].forEach(key => {
+  let open = true;
+  try { open = localStorage.getItem('mct-section-' + key) !== '0'; } catch {}
+  setSection(key, open);
+  document.querySelector('[data-toggle="' + key + '"]').onclick = () => setSection(key, $('body-' + key).hidden);
+});
 
 setInterval(() => { if (!$('app').hidden) refresh(); }, 3000);
 
-if (location.pathname === '/preview' || /[?&]preview\b/.test(location.search)) startDemo();
-else refresh();
+refresh();
 </script>
 </body>
 </html>

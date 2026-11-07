@@ -390,6 +390,67 @@ function cleanupTrack(track) {
 }
 
 // ======================================
+// HISTORIQUE (bouton « précédent »)
+// ======================================
+
+const HISTORY_MAX = 5;
+
+// Les MP3 envoyés sont supprimés après lecture : on en garde un lien (.keep) pour pouvoir les rejouer.
+function keepCopy(track) {
+  if (!track.deleteOnFinish || track.driveId || !track.file) return;
+
+  const keep = `${track.file}.${Date.now()}.keep`;
+  try {
+    fs.linkSync(track.file, keep);
+    track.keepFile = keep;
+  } catch {
+    try {
+      fs.copyFileSync(track.file, keep);
+      track.keepFile = keep;
+    } catch {}
+  }
+}
+
+function dropKeep(track) {
+  if (!track?.keepFile) return;
+  deleteUploadedFile(track.keepFile);
+  track.keepFile = null;
+}
+
+function snapshotTrack(track) {
+  if (track.driveId) return { name: track.name, driveId: track.driveId };
+  if (!track.file) return null;
+  if (!track.deleteOnFinish) return { name: track.name, file: track.file, persistent: true };
+  if (!track.keepFile) return null;
+  return { name: track.name, file: track.keepFile, persistent: false };
+}
+
+function trackFromSnapshot(snap) {
+  if (snap.driveId) {
+    return { name: snap.name, driveId: snap.driveId, file: null, ffmpeg: null, deleteOnFinish: true, deleteScheduled: false };
+  }
+  return { name: snap.name, file: snap.file, ffmpeg: null, deleteOnFinish: !snap.persistent, deleteScheduled: false };
+}
+
+function dropSnapshot(snap) {
+  if (snap && !snap.persistent && snap.file) deleteUploadedFile(snap.file);
+}
+
+// Appelé quand un morceau se termine : on le range dans l'historique (sauf si on revient en arrière).
+function endTrack(state, track, remember) {
+  const snap = remember ? snapshotTrack(track) : null;
+
+  if (snap) {
+    state.history.push(snap);
+    while (state.history.length > HISTORY_MAX) dropSnapshot(state.history.shift());
+  } else {
+    dropKeep(track);
+  }
+
+  cleanupTrack(track);
+}
+
+// ======================================
 // VOLUME (par serveur, enregistré dans volumes.json)
 // ======================================
 
@@ -453,12 +514,16 @@ function createMusicState(guildId, textChannel) {
     station: null,
     loop: false,
     lastRefill: 0,
-    looping: false
+    looping: false,
+    history: [],
+    goingBack: false
   };
 
   player.on(AudioPlayerStatus.Idle, () => {
     if (state.current) {
-      cleanupTrack(state.current);
+      const remember = !state.goingBack;
+      state.goingBack = false;
+      endTrack(state, state.current, remember);
       state.current = null;
     }
 
@@ -471,6 +536,7 @@ function createMusicState(guildId, textChannel) {
     console.error('Erreur audio :', error);
 
     if (state.current) {
+      dropKeep(state.current);
       cleanupTrack(state.current);
       state.current = null;
     }
@@ -569,6 +635,8 @@ async function refillLoop(guildId, state) {
 }
 
 function playTrack(guildId, state, track) {
+  keepCopy(track);
+
   const ffmpeg = spawn(ffmpegPath || 'ffmpeg', [
     '-hide_banner',
     '-loglevel', 'error',
@@ -593,6 +661,7 @@ function playTrack(guildId, state, track) {
     console.error('Erreur FFmpeg :', error);
 
     if (state.current === track) {
+      dropKeep(track);
       cleanupTrack(track);
       state.current = null;
 
@@ -786,6 +855,11 @@ function stopGuild(guildId) {
   }
 
   state.items = [];
+
+  for (const snap of state.history) dropSnapshot(snap);
+  state.history = [];
+
+  dropKeep(state.current);
   cleanupTrack(state.current);
   state.current = null;
   state.player.stop(true);
@@ -860,6 +934,7 @@ const botApi = {
         queue: state ? state.items.map(track => track.name) : [],
         station: state?.station || null,
         loop: Boolean(state?.loop),
+        canPrevious: Boolean(state?.history?.length),
         stations: guildStations(guild.id).map(s => ({
           name: s.name,
           locked: Boolean(s.password),
@@ -1070,6 +1145,31 @@ const botApi = {
     if (action === 'pause') state.player.pause();
     else if (action === 'resume') state.player.unpause();
     else if (action === 'skip') state.player.stop(true);
+    else if (action === 'previous') {
+      const id = String(guildId);
+      const previous = state.history.pop();
+      if (!previous) throw new Error('Aucun morceau précédent.');
+
+      // Le morceau en cours est remis en tête de file : « suivant » y revient.
+      const current = state.current;
+      const snap = current ? snapshotTrack(current) : null;
+      if (snap) {
+        state.items.unshift(trackFromSnapshot(snap));
+        current.keepFile = null; // le fichier conservé passe au morceau remis dans la file
+      }
+      state.items.unshift(trackFromSnapshot(previous));
+
+      if (!current) {
+        startTrack(id);
+      } else if ((current.driveId && !current.file) || state.player.state.status === AudioPlayerStatus.Idle) {
+        cleanupTrack(current);
+        state.current = null;
+        startTrack(id);
+      } else {
+        state.goingBack = true;
+        state.player.stop(true);
+      }
+    }
     else if (action === 'stop') stopGuild(String(guildId));
     else if (action === 'loop-on') {
       if (!state.station) throw new Error('Lance d’abord une playlist.');

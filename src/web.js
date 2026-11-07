@@ -62,7 +62,7 @@ function startWeb(bot) {
     const url = new URL(req.url, 'http://localhost');
 
     try {
-      if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/preview')) {
+      if (req.method === 'GET' && url.pathname === '/') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
         return res.end(fs.readFileSync(path.join(__dirname, 'dashboard.html')));
       }
