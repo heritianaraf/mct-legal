@@ -950,7 +950,7 @@ const botApi = {
 
     const tmpPath = await saveUploadStream(stream, fileName);
     const result = await addFileToStation(String(guildId), station.name, tmpPath, fileName);
-    return `✅ ${result.label} ajouté à ${station.name}.`;
+    return `✅ ${result.label} ajouté à ${station.name}.${result.info.includes('⚠️') ? ' ' + result.info : ''}`;
   },
 
   removeStationItem(guildId, name, index) {
@@ -1364,7 +1364,9 @@ const guildStations = guildId => loadStations()[guildId] || [];
 const findStation = (guildId, name) => guildStations(guildId).find(s => sameName(s.name, name));
 
 async function deleteStoredFile(name) {
-  await fsp.unlink(path.join(PLAYLIST_DIR, path.basename(String(name)))).catch(() => {});
+  const base = path.basename(String(name));
+  await fsp.unlink(path.join(PLAYLIST_DIR, base)).catch(() => {});
+  deleteFileBackup(base);
 }
 
 // Modifie une playlist de façon synchrone (lecture + écriture sans interruption).
@@ -1470,6 +1472,7 @@ async function addFileToStation(guildId, name, tmpPath, originalName) {
     .replace(/[^a-zA-Z0-9 _-]/g, '_')
     .slice(0, 70) || 'musique';
   const stored = `${Date.now()}-${randomUUID()}-${label}.mp3`;
+  let saved = true;
 
   try {
     if (!findStation(guildId, name)) throw new Error('Playlist introuvable.');
@@ -1482,12 +1485,17 @@ async function addFileToStation(guildId, name, tmpPath, originalName) {
       await deleteStoredFile(stored);
       throw error;
     }
+
+    saved = await backupStoredFile(stored);
   } catch (error) {
     await fsp.unlink(tmpPath).catch(() => {});
     throw error;
   }
 
-  return { label, info: 'fichier MP3' };
+  return {
+    label,
+    info: saved ? 'fichier MP3' : 'fichier MP3, ⚠️ non sauvegardé sur Discord (fichier trop gros ?)'
+  };
 }
 
 // Enregistre un MP3 reçu par le navigateur dans un fichier temporaire.
@@ -1569,6 +1577,10 @@ async function saveTracksToStations(guildId, tracks, stationNames) {
             await deleteStoredFile(stored);
             throw error;
           }
+
+          if (!(await backupStoredFile(stored))) {
+            notes.push(`⚠️ ${label} : non sauvegardé sur Discord (fichier trop gros ?)`);
+          }
         } else {
           throw new Error('fichier indisponible');
         }
@@ -1599,6 +1611,7 @@ async function enqueueStation(state, station) {
         await enqueueDrive(state, item.value);
       } else if (item.type === 'file') {
         const file = path.join(PLAYLIST_DIR, path.basename(String(item.value)));
+        if (!fs.existsSync(file)) await restoreStoredFile(item.value);
         if (!fs.existsSync(file)) throw new Error('fichier introuvable sur le serveur.');
         state.items.push({ name: label, file, ffmpeg: null, deleteOnFinish: false });
       } else {
@@ -1953,9 +1966,8 @@ function scheduleBackup() {
         files: [{ attachment: Buffer.from(fs.readFileSync(STATIONS_FILE)), name: BACKUP_NAME }]
       });
 
-      const recent = await channel.messages.fetch({ limit: 30 });
-      for (const message of recent.values()) {
-        if (message.id !== sent.id && message.author.id === client.user.id && message.attachments.some(a => a.name === BACKUP_NAME)) {
+      for (const message of await botMessages(channel, 10)) {
+        if (message.id !== sent.id && message.attachments.some(a => a.name === BACKUP_NAME)) {
           message.delete().catch(() => {});
         }
       }
@@ -1973,9 +1985,8 @@ async function restoreBackup() {
     const channel = await backupChannel();
     if (!channel) return console.warn('BACKUP_CHANNEL_ID : salon introuvable ou inaccessible.');
 
-    const recent = await channel.messages.fetch({ limit: 50 });
-    const message = [...recent.values()]
-      .filter(m => m.author.id === client.user.id && m.attachments.some(a => a.name === BACKUP_NAME))
+    const message = (await botMessages(channel, 30))
+      .filter(m => m.attachments.some(a => a.name === BACKUP_NAME))
       .sort((a, b) => b.createdTimestamp - a.createdTimestamp)[0];
     if (!message) return console.log('Aucune sauvegarde de playlists trouvée dans le salon.');
 
@@ -1993,11 +2004,156 @@ async function restoreBackup() {
 }
 
 // ======================================
+// SAUVEGARDE DES MP3 ENVOYÉS DANS LE MÊME SALON
+// Chaque MP3 ajouté à une playlist est posté dans le salon de sauvegarde
+// (limite d'envoi de Discord : ~10 Mo par fichier sans boost du serveur).
+// Au démarrage, les MP3 manquants sont téléchargés de nouveau.
+// ======================================
+
+const FILE_TAG = '🎵 MP3 ';
+const fileBackups = new Map(); // nom stocké -> { id, url }
+let pendingScan = null;
+
+// Messages du bot dans le salon, du plus récent au plus ancien.
+async function botMessages(channel, maxPages = 30) {
+  const found = [];
+  let before;
+
+  for (let i = 0; i < maxPages; i++) {
+    const page = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
+    if (!page.size) break;
+
+    for (const message of page.values()) {
+      if (message.author.id === client.user.id) found.push(message);
+    }
+
+    before = page.last().id;
+    if (page.size < 100) break;
+  }
+
+  return found;
+}
+
+function scanFileBackups(channel) {
+  if (!pendingScan) {
+    pendingScan = (async () => {
+      for (const message of await botMessages(channel, 60)) {
+        if (!message.content.startsWith(FILE_TAG)) continue;
+        const stored = message.content.slice(FILE_TAG.length).trim();
+        const attachment = message.attachments.first();
+        if (stored && attachment) fileBackups.set(stored, { id: message.id, url: attachment.url });
+      }
+    })().finally(() => {
+      pendingScan = null;
+    });
+  }
+
+  return pendingScan;
+}
+
+async function backupStoredFile(stored) {
+  if (!BACKUP_CHANNEL_ID) return true;
+
+  try {
+    const channel = await backupChannel();
+    if (!channel) return false;
+
+    const sent = await channel.send({
+      content: FILE_TAG + stored,
+      files: [{ attachment: path.join(PLAYLIST_DIR, stored), name: stored }]
+    });
+
+    fileBackups.set(stored, { id: sent.id, url: sent.attachments.first()?.url });
+    return true;
+  } catch (error) {
+    console.error(`Sauvegarde du MP3 impossible (${stored}) :`, error.message);
+    return false;
+  }
+}
+
+async function restoreStoredFile(name) {
+  const stored = path.basename(String(name));
+  const target = path.join(PLAYLIST_DIR, stored);
+
+  if (fs.existsSync(target)) return true;
+  if (!BACKUP_CHANNEL_ID) return false;
+
+  try {
+    const channel = await backupChannel();
+    if (!channel) return false;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      // 1re tentative : adresse connue ; 2e : on relit le salon (les adresses Discord expirent)
+      if (attempt === 1 || !fileBackups.has(stored)) {
+        fileBackups.delete(stored);
+        await scanFileBackups(channel);
+      }
+
+      const entry = fileBackups.get(stored);
+      if (!entry?.url) return false;
+
+      const response = await fetch(entry.url, { signal: AbortSignal.timeout(60000) });
+      if (!response.ok) continue;
+
+      const tmp = `${target}.tmp`;
+      await fsp.writeFile(tmp, Buffer.from(await response.arrayBuffer()));
+      await fsp.rename(tmp, target);
+      return true;
+    }
+  } catch (error) {
+    console.error(`Restauration du MP3 impossible (${stored}) :`, error.message);
+  }
+
+  return false;
+}
+
+async function restoreMissingFiles() {
+  if (!BACKUP_CHANNEL_ID) return;
+
+  const missing = new Set();
+  for (const list of Object.values(loadStations())) {
+    for (const station of list) {
+      for (const item of station.items) {
+        if (item.type === 'file' && !fs.existsSync(path.join(PLAYLIST_DIR, path.basename(String(item.value))))) {
+          missing.add(String(item.value));
+        }
+      }
+    }
+  }
+
+  if (!missing.size) return;
+
+  let restored = 0;
+  for (const name of missing) {
+    if (await restoreStoredFile(name)) restored++;
+  }
+  console.log(`✅ MP3 restaurés depuis le salon de sauvegarde : ${restored}/${missing.size}`);
+}
+
+async function deleteFileBackup(stored) {
+  if (!BACKUP_CHANNEL_ID) return;
+
+  try {
+    const channel = await backupChannel();
+    if (!channel) return;
+
+    if (!fileBackups.has(stored)) await scanFileBackups(channel);
+
+    const entry = fileBackups.get(stored);
+    if (entry) {
+      fileBackups.delete(stored);
+      await channel.messages.delete(entry.id).catch(() => {});
+    }
+  } catch {}
+}
+
+// ======================================
 // DÉMARRAGE
 // ======================================
 
 client.once(Events.ClientReady, async readyClient => {
   await restoreBackup();
+  await restoreMissingFiles();
   console.log('================================');
   console.log(`🎵 MCT MUSIC connecté : ${readyClient.user.tag}`);
   console.log('✅ Lecture des MP3 joints aux commandes /play activée');
