@@ -140,6 +140,26 @@ button.main {
     color: #fff;
 }
 
+/* Boutons colorés : ajouter = bleu, supprimer = rouge, lancer/jouer = vert */
+button.add,
+label.file.add {
+    background: #1e6fe8;
+    border-color: #1e6fe8;
+    color: #fff;
+}
+
+button.del {
+    background: #d62828;
+    border-color: #d62828;
+    color: #fff;
+}
+
+button.play {
+    background: #1fa84f;
+    border-color: #1fa84f;
+    color: #fff;
+}
+
 button:hover,
 .file:hover {
     opacity: .85;
@@ -320,7 +340,7 @@ summary {
       
         <div class="row">
           <input id="drurl" type="text" placeholder="Lien Google Drive (MP3 ou dossier)">
-          <button id="dr" class="main">Ajouter</button>
+          <button id="dr" class="add">Ajouter</button>
         </div>
         
       
@@ -332,7 +352,7 @@ summary {
       <h2>Soundboard du serveur</h2>
       <div class="row">
         <select id="sound" aria-label="Son"></select>
-        <button id="soundplay" class="main">Jouer</button>
+        <button id="soundplay" class="play">Jouer</button>
         <button id="soundrefresh" class="ghost" title="Actualiser la liste">↻</button>
       </div>
       <p id="snone" class="empty" hidden>Aucun son dans la table de mixage de ce serveur.</p>
@@ -343,14 +363,14 @@ summary {
       <div class="stack">
         <div class="row" id="stlist">
           <select id="station" aria-label="Playlist"></select>
-          <button id="stplay" class="main">Lancer</button>
+          <button id="stplay" class="play">Lancer</button>
           <button id="stshow" class="ghost">Afficher la liste</button>
-          <button id="stdel" class="ghost">Supprimer</button>
+          <button id="stdel" class="del">Supprimer</button>
         </div>
         <label class="chk" id="stloopl"><input type="checkbox" id="stloop" checked> Relancer la playlist en boucle</label>
         <div class="row" id="stdelbox" hidden>
           <input id="stpw" type="password" placeholder="Mot de passe de la playlist" autocomplete="off">
-          <button id="stdelok" class="main">Confirmer</button>
+          <button id="stdelok" class="del">Confirmer</button>
           <button id="stdelno" class="ghost">Annuler</button>
         </div>
         <ol id="stitems" hidden></ol>
@@ -358,11 +378,11 @@ summary {
         <div id="stadd" class="stack">
           <div class="row">
             <input id="stlink" type="text" placeholder="Ajouter : lien Google Drive (MP3 ou dossier)">
-            <button id="stlinkbtn" class="main">Ajouter</button>
+            <button id="stlinkbtn" class="add">Ajouter</button>
           </div>
-          <label class="file">Ajouter des MP3 depuis mon PC ou TELEPHONE<input id="stfile" type="file" accept=".mp3,audio/mpeg" multiple></label>
+          <label class="file add">Ajouter des MP3 depuis mon PC ou TELEPHONE<input id="stfile" type="file" accept=".mp3,audio/mpeg" multiple></label>
         </div>
-        <button id="stopennew" class="ghost">➕ Ajouter une playlist</button>
+        <button id="stopennew" class="add">➕ Ajouter une playlist</button>
         <div id="stnewbox" class="stack" hidden>
           <h2 class="sep">Nouvelle playlist</h2>
           <div class="row">
@@ -374,7 +394,7 @@ summary {
             <input id="stnewpw2" type="password" placeholder="Confirmer le mot de passe" autocomplete="new-password">
           </div>
           <div class="row">
-            <button id="stnew" class="main">Créer</button>
+            <button id="stnew" class="add">Créer</button>
             <button id="stnewno" class="ghost">Annuler</button>
           </div>
         </div>
@@ -391,7 +411,7 @@ summary {
         <p id="qnone" class="empty" hidden>Crée d’abord une playlist.</p>
         <div class="row">
           <button id="qall" class="ghost">Tout sélectionner</button>
-          <button id="qsavebtn" class="main">Ajouter la sélection</button>
+          <button id="qsavebtn" class="add">Ajouter la sélection</button>
         </div>
       </div>
     </div>
