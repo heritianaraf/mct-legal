@@ -288,7 +288,7 @@ input[type="file"] {
           <input id="radiourl" type="text" placeholder="Radio / flux audio (adresse http…)">
           <button id="radio" class="main">Ajouter</button>
         </div>
-        <label class="file">Envoyer un MP3 depuis mon PC ou TELEPHONE<input id="file" type="file" accept=".mp3,audio/mpeg"></label>
+        <label class="file">Envoyer des MP3 depuis mon PC ou TELEPHONE<input id="file" type="file" accept=".mp3,audio/mpeg" multiple></label>
       </div>
     </div>
 
@@ -308,7 +308,7 @@ input[type="file"] {
             <input id="stlink" type="text" placeholder="Ajouter : lien Spotify, Google Drive ou radio">
             <button id="stlinkbtn" class="main">Ajouter</button>
           </div>
-          <label class="file">Ajouter un MP3 depuis mon PC ou TELEPHONE<input id="stfile" type="file" accept=".mp3,audio/mpeg"></label>
+          <label class="file">Ajouter des MP3 depuis mon PC ou TELEPHONE<input id="stfile" type="file" accept=".mp3,audio/mpeg" multiple></label>
         </div>
         <h2 class="sep">Nouvelle playlist</h2>
         <div class="row">
@@ -443,6 +443,29 @@ async function act(fn) {
   refresh();
 }
 
+// Envoie plusieurs MP3 un par un (l'ordre de sélection est conservé).
+async function uploadMany(input, urlFor) {
+  const files = [...input.files];
+  input.value = '';
+  if (!files.length) return '';
+
+  const problems = [];
+  let done = 0;
+
+  for (const [index, file] of files.entries()) {
+    msg('⏳ Envoi ' + (index + 1) + '/' + files.length + ' : ' + file.name);
+    try {
+      await api(urlFor(file.name), { method: 'PUT', body: file });
+      done++;
+    } catch (error) {
+      problems.push('⚠️ ' + file.name + ' : ' + error.message);
+      if (error.message === 'Session expirée.') break;
+    }
+  }
+
+  return ['🎶 ' + done + '/' + files.length + ' MP3 ajouté(s).', ...problems].join('\n');
+}
+
 const ctx = () => ({ guildId: $('guild').value, channelId: $('channel').value });
 
 $('add').onclick = () => act(async () =>
@@ -467,12 +490,8 @@ $('radio').onclick = () => act(async () => {
 });
 
 $('file').onchange = () => act(async () => {
-  const file = $('file').files[0];
-  if (!file) return '';
-  const params = new URLSearchParams({ ...ctx(), name: file.name });
-  const result = await api('/api/upload?' + params, { method: 'PUT', body: file });
-  $('file').value = '';
-  return result.message;
+  const base = ctx();
+  return uploadMany($('file'), name => '/api/upload?' + new URLSearchParams({ ...base, name }));
 });
 
 $('stplay').onclick = () => act(async () =>
@@ -495,12 +514,8 @@ $('stlinkbtn').onclick = () => act(async () => {
 });
 
 $('stfile').onchange = () => act(async () => {
-  const file = $('stfile').files[0];
-  if (!file) return '';
-  const params = new URLSearchParams({ guildId: $('guild').value, name: $('station').value, file: file.name });
-  const result = await api('/api/station/upload?' + params, { method: 'PUT', body: file });
-  $('stfile').value = '';
-  return result.message;
+  const base = { guildId: $('guild').value, name: $('station').value };
+  return uploadMany($('stfile'), file => '/api/station/upload?' + new URLSearchParams({ ...base, file }));
 });
 
 $('stnew').onclick = () => act(async () => {
