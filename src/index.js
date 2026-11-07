@@ -604,6 +604,19 @@ const botApi = {
           .replace(/\*\*/g, '');
       }
 
+      if (source === 'url') {
+        const filePath = await downloadGoogleDriveMp3(String(value || ''));
+
+        state.items.push({
+          name: 'Musique Google Drive',
+          file: filePath,
+          ffmpeg: null,
+          deleteOnFinish: true,
+          deleteScheduled: false
+        });
+        return '🎶 Musique Google Drive ajoutée à la file.';
+      }
+
       throw new Error('Source inconnue.');
     });
   },
