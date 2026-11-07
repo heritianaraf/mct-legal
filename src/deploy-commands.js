@@ -71,7 +71,46 @@ const commands = [
   // LIST
   new SlashCommandBuilder()
     .setName('list')
-    .setDescription('Afficher les MP3 disponibles')
+    .setDescription('Afficher les MP3 disponibles'),
+
+  // STATION
+  new SlashCommandBuilder()
+    .setName('station')
+    .setDescription('Créer et lancer tes stations')
+    .addSubcommand(sub =>
+      sub
+        .setName('creer')
+        .setDescription('Créer une nouvelle station (playlist Spotify ou radio)')
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('jouer')
+        .setDescription('Lancer une station')
+        .addStringOption(option =>
+          option
+            .setName('nom')
+            .setDescription('Nom de la station')
+            .setAutocomplete(true)
+            .setRequired(true)
+        )
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('liste')
+        .setDescription('Afficher les stations enregistrées')
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('supprimer')
+        .setDescription('Supprimer une station')
+        .addStringOption(option =>
+          option
+            .setName('nom')
+            .setDescription('Nom de la station')
+            .setAutocomplete(true)
+            .setRequired(true)
+        )
+    )
 
 ].map(command => command.toJSON());
 
@@ -107,6 +146,7 @@ async function main() {
   console.log('/play url');
   console.log('/play spotify');
   console.log('/play radio');
+  console.log('/station creer /jouer /liste /supprimer');
   console.log('/pause /resume /stop');
   console.log('/skip /queue /list');
   console.log('================================');

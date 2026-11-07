@@ -11,7 +11,16 @@ const { pipeline } = require('node:stream/promises');
 const dns = require('node:dns/promises');
 const net = require('node:net');
 
-const { Client, GatewayIntentBits, Events, MessageFlags } = require('discord.js');
+const {
+  Client,
+  GatewayIntentBits,
+  Events,
+  MessageFlags,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder
+} = require('discord.js');
 
 const { startWeb } = require('./web');
 const { resolveSpotify } = require('./spotify');
@@ -624,7 +633,7 @@ async function assertPublicHost(hostname) {
   }
 }
 
-async function enqueueRadio(state, rawUrl) {
+async function probeRadio(rawUrl) {
   let url;
   try {
     url = new URL(rawUrl);
@@ -678,9 +687,15 @@ async function enqueueRadio(state, rawUrl) {
     .trim()
     .slice(0, 80) || finalUrl.hostname;
 
+  return { title, stream: finalUrl.href };
+}
+
+async function enqueueRadio(state, rawUrl) {
+  const { title, stream } = await probeRadio(rawUrl);
+
   state.items.push({
     name: `📻 ${title}`,
-    stream: finalUrl.href,
+    stream,
     ffmpeg: null,
     deleteOnFinish: false
   });
@@ -1186,6 +1201,216 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 // ======================================
+// STATIONS (formulaire /station creer)
+// ======================================
+
+const STATIONS_FILE = path.join(MUSIC_DIR, '..', 'stations.json');
+const MAX_STATIONS = 25;
+
+function loadStations() {
+  try {
+    return JSON.parse(fs.readFileSync(STATIONS_FILE, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function saveStations(all) {
+  const tmp = `${STATIONS_FILE}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(all, null, 2));
+  fs.renameSync(tmp, STATIONS_FILE);
+}
+
+const guildStations = guildId => loadStations()[guildId] || [];
+
+const findStation = (guildId, name) =>
+  guildStations(guildId).find(s => s.name.toLowerCase() === String(name).toLowerCase().trim());
+
+async function buildStation(source, customName) {
+  let url;
+  try {
+    url = new URL(source.trim());
+  } catch {
+    throw new Error('Colle un lien valide : playlist Spotify ou adresse directe d’une radio.');
+  }
+
+  const host = url.hostname.replace(/^www\./, '');
+
+  if (host === 'open.spotify.com') {
+    const { label, tracks } = await resolveSpotify(url.href);
+    return {
+      type: 'spotify',
+      value: url.href,
+      name: customName || label,
+      info: `${tracks.length} morceau(x), lus depuis tes MP3 locaux`
+    };
+  }
+
+  if (/(^|\.)(music\.apple\.com|soundcloud\.com)$/i.test(host)) {
+    throw new Error(
+      'Apple Music et SoundCloud ne donnent pas accès à l’audio : le bot ne peut pas les lire. Utilise une playlist Spotify (lue depuis tes MP3) ou l’adresse directe d’une radio.'
+    );
+  }
+
+  const radio = await probeRadio(url.href);
+  return {
+    type: 'radio',
+    value: url.href,
+    name: customName || radio.title,
+    info: 'radio en direct'
+  };
+}
+
+async function enqueueStation(state, station) {
+  if (station.type === 'radio') return enqueueRadio(state, station.value);
+  return spotifyReport(await enqueueSpotify(state, station.value));
+}
+
+client.on(Events.InteractionCreate, async interaction => {
+  try {
+    // Autocomplétion des noms de stations
+    if (interaction.isAutocomplete() && interaction.commandName === 'station') {
+      const typed = interaction.options.getFocused().toLowerCase();
+      return interaction.respond(
+        guildStations(interaction.guildId)
+          .filter(s => s.name.toLowerCase().includes(typed))
+          .slice(0, 25)
+          .map(s => ({ name: s.name.slice(0, 100), value: s.name.slice(0, 100) }))
+      );
+    }
+
+    // Validation du formulaire
+    if (interaction.isModalSubmit() && interaction.customId === 'station-create') {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+      const source = interaction.fields.getTextInputValue('source');
+      const customName = interaction.fields.getTextInputValue('name').trim();
+      const all = loadStations();
+      const list = all[interaction.guildId] || [];
+
+      if (list.length >= MAX_STATIONS) {
+        throw new Error(`Maximum ${MAX_STATIONS} stations par serveur. Supprime-en une avec /station supprimer.`);
+      }
+
+      const station = await buildStation(source, customName);
+      station.name = station.name.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 50) || 'Station';
+
+      if (list.some(s => s.name.toLowerCase() === station.name.toLowerCase())) {
+        throw new Error(`Une station s’appelle déjà « ${station.name} ». Choisis un autre nom.`);
+      }
+
+      const { info, ...saved } = station;
+      all[interaction.guildId] = [...list, saved];
+      saveStations(all);
+
+      return interaction.editReply(
+        `✅ Station **${saved.name}** créée (${info}).\nLance-la avec \`/station jouer\`.`
+      );
+    }
+
+    if (!interaction.isChatInputCommand() || interaction.commandName !== 'station') return;
+
+    const guildId = interaction.guildId;
+    if (!guildId) {
+      return interaction.reply({ content: '❌ Commande réservée aux serveurs.', flags: MessageFlags.Ephemeral });
+    }
+
+    const sub = interaction.options.getSubcommand();
+
+    if (sub === 'creer') {
+      const modal = new ModalBuilder()
+        .setCustomId('station-create')
+        .setTitle('Créer une nouvelle station')
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('source')
+              .setLabel('Playlist ou URL de la station')
+              .setStyle(TextInputStyle.Paragraph)
+              .setPlaceholder('Lien de playlist Spotify ou URL radio')
+              .setRequired(true)
+              .setMaxLength(500)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('name')
+              .setLabel('Nom de la station (facultatif)')
+              .setStyle(TextInputStyle.Short)
+              .setPlaceholder('Nom de la station')
+              .setRequired(false)
+              .setMaxLength(50)
+          )
+        );
+
+      return interaction.showModal(modal);
+    }
+
+    if (sub === 'liste') {
+      const list = guildStations(guildId);
+      if (!list.length) {
+        return interaction.reply({
+          content: '📻 Aucune station. Crée-en une avec `/station creer`.',
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      const lines = list.map((s, i) => `${i + 1}. **${s.name}** (${s.type === 'radio' ? 'radio' : 'playlist Spotify'})`);
+      return interaction.reply({
+        content: `📻 **Stations**\n\n${lines.join('\n')}`.slice(0, 1950),
+        flags: MessageFlags.Ephemeral
+      });
+    }
+
+    if (sub === 'supprimer') {
+      const station = findStation(guildId, interaction.options.getString('nom'));
+      if (!station) {
+        return interaction.reply({ content: '❌ Station introuvable.', flags: MessageFlags.Ephemeral });
+      }
+
+      const all = loadStations();
+      all[guildId] = all[guildId].filter(s => s !== station && s.name !== station.name);
+      saveStations(all);
+      return interaction.reply({ content: `🗑️ Station **${station.name}** supprimée.`, flags: MessageFlags.Ephemeral });
+    }
+
+    if (sub === 'jouer') {
+      const station = findStation(guildId, interaction.options.getString('nom'));
+      if (!station) {
+        return interaction.reply({ content: '❌ Station introuvable. Utilise /station liste.', flags: MessageFlags.Ephemeral });
+      }
+
+      await interaction.deferReply();
+
+      let state = queues.get(guildId);
+      if (!state) {
+        state = createMusicState(guildId, interaction.channel);
+        queues.set(guildId, state);
+      } else {
+        state.textChannel = interaction.channel;
+      }
+
+      try {
+        await connectVoice(interaction, state);
+        const message = await enqueueStation(state, station);
+        await interaction.editReply(`📻 Station **${station.name}**\n${message}`.slice(0, 1900));
+        startTrack(guildId);
+      } finally {
+        if (!state.current && state.items.length === 0) stopGuild(guildId);
+      }
+    }
+  } catch (error) {
+    console.error('Erreur station :', error);
+
+    const message = `❌ ${error.message}`;
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(message).catch(() => {});
+    } else if (interaction.isRepliable()) {
+      await interaction.reply({ content: message, flags: MessageFlags.Ephemeral }).catch(() => {});
+    }
+  }
+});
+
+// ======================================
 // DÉMARRAGE
 // ======================================
 
@@ -1196,6 +1421,7 @@ client.once(Events.ClientReady, readyClient => {
   console.log('✅ Lecture des MP3 joints aux commandes /play activée');
   console.log('✅ Lecture des MP3 publics Google Drive activée');
   console.log('✅ Radios / flux audio en direct activés');
+  console.log('✅ Stations enregistrées (/station)');
   console.log('✅ Liens Spotify : retrouvés dans les MP3 locaux (titre du morceau)');
   console.log('================================');
 });
