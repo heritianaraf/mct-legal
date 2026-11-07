@@ -772,6 +772,48 @@ const botApi = {
     return `🗑️ ${removed.label} retiré de la playlist.`;
   },
 
+  // Réorganise la file : 'up' remonte d'un cran, 'play' lance le morceau tout de suite.
+  queueAction(guildId, index, action, name) {
+    const id = String(guildId);
+    const state = queues.get(id);
+    if (!state) throw new Error('Aucune lecture sur ce serveur.');
+
+    const position = Number(index);
+    const track = state.items[position];
+
+    if (!Number.isInteger(position) || !track || (name && track.name !== name)) {
+      throw new Error('La file a changé, réessaie.');
+    }
+
+    if (action === 'up') {
+      if (position === 0) throw new Error('Ce morceau est déjà le prochain.');
+      [state.items[position - 1], state.items[position]] = [state.items[position], state.items[position - 1]];
+      return `⬆️ ${track.name} remonté dans la file.`;
+    }
+
+    if (action === 'play') {
+      state.items.splice(position, 1);
+      state.items.unshift(track);
+
+      const current = state.current;
+
+      if (!current) {
+        startTrack(id);
+      } else if (current.driveId && !current.file) {
+        // morceau Drive encore en téléchargement : on l'abandonne
+        cleanupTrack(current);
+        state.current = null;
+        startTrack(id);
+      } else {
+        state.player.stop(true);
+      }
+
+      return `▶️ ${track.name} : lecture immédiate.`;
+    }
+
+    throw new Error('Action inconnue.');
+  },
+
   async control(guildId, action) {
     const state = queues.get(String(guildId));
     if (!state) throw new Error('Aucune lecture sur ce serveur.');

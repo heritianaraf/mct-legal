@@ -363,6 +363,10 @@ function removeItem(name, index) {
   act(async () => (await api('/api/station/remove-item', post({ guildId: $('guild').value, name, index }))).message);
 }
 
+function queueAction(index, name, action) {
+  act(async () => (await api('/api/queue', post({ guildId: $('guild').value, index, name, action }))).message);
+}
+
 function render() {
   fill($('guild'), data.guilds.map(g => [g.id, g.name]));
   const g = data.guilds.find(x => x.id === $('guild').value);
@@ -401,13 +405,33 @@ function render() {
   $('loop').hidden = !g?.station;
   $('loop').textContent = g?.loop ? '🔁 Boucle activée' : '🔁 Boucle désactivée';
 
-  const items = (g?.queue || []).map(name => {
-    const li = document.createElement('li');
-    li.textContent = name;
-    return li;
-  });
-  $('queue').replaceChildren(...items);
-  $('qempty').hidden = items.length > 0;
+  const queue = g?.queue || [];
+  const qsig = JSON.stringify([g?.id, queue]);
+  if ($('queue').dataset.sig !== qsig) {
+    $('queue').dataset.sig = qsig;
+    $('queue').replaceChildren(...queue.map((name, index) => {
+      const li = document.createElement('li');
+      li.append(name);
+
+      const play = document.createElement('button');
+      play.className = 'ghost rm';
+      play.textContent = '▶';
+      play.title = 'Lire maintenant';
+      play.onclick = () => queueAction(index, name, 'play');
+      li.append(play);
+
+      if (index > 0) {
+        const up = document.createElement('button');
+        up.className = 'ghost rm';
+        up.textContent = '⬆';
+        up.title = 'Remonter';
+        up.onclick = () => queueAction(index, name, 'up');
+        li.append(up);
+      }
+      return li;
+    }));
+  }
+  $('qempty').hidden = queue.length > 0;
 }
 
 async function refresh() {
