@@ -193,42 +193,54 @@ function extractGoogleDriveFolderId(rawUrl) {
   return match ? match[1] : null;
 }
 
+function decodeHtml(text) {
+  return text
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+// Lit la liste des fichiers d'un dossier public via sa page « embed » (sans clé API).
 async function listDriveFolderMp3(folderId) {
-  const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) {
-    throw new Error('Définis GOOGLE_API_KEY dans .env pour lire un dossier Google Drive.');
+  const response = await fetch(
+    `https://drive.google.com/embeddedfolderview?id=${encodeURIComponent(folderId)}`,
+    {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MCTMusic/1.0)', 'Accept-Language': 'en' },
+      signal: AbortSignal.timeout(20000)
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      'Impossible de lire ce dossier Google Drive. Vérifie qu’il est partagé en « Toute personne disposant du lien ».'
+    );
   }
 
+  const html = await response.text();
   const files = [];
-  let pageToken = '';
+  const seen = new Set();
 
-  do {
-    const params = new URLSearchParams({
-      q: `'${folderId}' in parents and trashed = false`,
-      fields: 'nextPageToken,files(id,name,mimeType)',
-      pageSize: '1000',
-      orderBy: 'name',
-      key: apiKey
-    });
-    if (pageToken) params.set('pageToken', pageToken);
+  for (const match of html.matchAll(/id="entry-([A-Za-z0-9_-]+)"[\s\S]*?class="flip-entry-title">([^<]*)</g)) {
+    const id = match[1];
+    const name = decodeHtml(match[2]).trim();
 
-    const response = await fetch(`https://www.googleapis.com/drive/v3/files?${params}`, {
-      signal: AbortSignal.timeout(15000)
-    });
+    if (seen.has(id) || !/\.mp3$/i.test(name)) continue;
+    seen.add(id);
+    files.push({ id, name });
+  }
 
-    if (!response.ok) {
-      throw new Error(
-        'Impossible de lire ce dossier Google Drive. Vérifie qu’il est partagé en « Toute personne disposant du lien » et que GOOGLE_API_KEY est valide.'
-      );
-    }
-
-    const data = await response.json();
-    files.push(...(data.files || []));
-    pageToken = data.nextPageToken || '';
-  } while (pageToken && files.length < 1000);
+  if (!files.length) {
+    throw new Error(
+      'Aucun MP3 trouvé dans ce dossier. Vérifie qu’il est partagé en « Toute personne disposant du lien » et qu’il contient des .mp3 (sous-dossiers ignorés).'
+    );
+  }
 
   return files
-    .filter(file => /\.mp3$/i.test(file.name) || file.mimeType === 'audio/mpeg')
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
     .slice(0, MAX_DRIVE_FOLDER_TRACKS);
 }
 
