@@ -662,6 +662,13 @@ function connectVoice(interaction, state) {
 
 const soundCache = new Map(); // guildId -> { at, sounds }
 
+// Permissions nécessaires pour envoyer un son (valeurs officielles de Discord).
+const SOUNDBOARD_PERMISSIONS = [
+  ['Se connecter', 1n << 20n],
+  ['Parler', 1n << 21n],
+  ['Utiliser la table de mixage', 1n << 42n]
+];
+
 // Liste les sons de la table de mixage du serveur (en cache 60 s).
 async function listSounds(guildId, force = false) {
   const id = String(guildId);
@@ -703,6 +710,21 @@ async function playSound(guild, voiceChannel, soundId) {
   const sound = (await listSounds(guild.id)).find(item => item.id === String(soundId));
   if (!sound) throw new Error('Son introuvable dans la table de mixage de ce serveur.');
 
+  // Permissions réelles du bot dans CE salon (rôles + réglages du salon).
+  const mine = voiceChannel?.permissionsFor?.(guild.members?.me)?.bitfield;
+  if (typeof mine === 'bigint') {
+    const missing = SOUNDBOARD_PERMISSIONS
+      .filter(([, bit]) => (mine & bit) !== bit)
+      .map(([name]) => name);
+
+    if (missing.length) {
+      throw new Error(
+        `Il manque au bot dans le salon « ${voiceChannel.name} » : ${missing.join(', ')}. ` +
+        'Donne-lui ces permissions (rôle du bot, ou réglages de ce salon).'
+      );
+    }
+  }
+
   let state = queues.get(guild.id);
   if (!state) {
     state = createMusicState(guild.id, null);
@@ -717,9 +739,13 @@ async function playSound(guild, voiceChannel, soundId) {
         body: { sound_id: sound.id }
       });
     } catch (error) {
-      if (error?.status === 403 || error?.code === 50013) {
+      // Erreur renvoyée par l'API Discord : on affiche sa vraie raison.
+      if (error?.status !== undefined || error?.code !== undefined) {
+        console.error('Soundboard refusé par Discord :', error);
+
         throw new Error(
-          'Le bot n’a pas la permission « Utiliser la table de mixage » (ni « Parler ») dans ce salon vocal.'
+          `Discord a refusé l’envoi du son : ${error.message}${error.code ? ` (code ${error.code})` : ''}.` +
+          (error.status === 403 ? ' Vérifie aussi que le bot n’est pas rendu muet ou sourd sur le serveur.' : '')
         );
       }
       throw error;
