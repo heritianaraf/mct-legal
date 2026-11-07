@@ -362,15 +362,21 @@ summary {
           </div>
           <label class="file">Ajouter des MP3 depuis mon PC ou TELEPHONE<input id="stfile" type="file" accept=".mp3,audio/mpeg" multiple></label>
         </div>
-        <h2 class="sep">Nouvelle playlist</h2>
-        <div class="row">
-          <input id="stname" type="text" placeholder="Nom de la playlist">
-          <input id="stsrc" type="text" placeholder="Premier lien (facultatif)">
-        </div>
-        <div class="row">
-          <input id="stnewpw" type="password" placeholder="Mot de passe de la playlist (4 caractères min.)" autocomplete="new-password">
-          <input id="stnewpw2" type="password" placeholder="Confirmer le mot de passe" autocomplete="new-password">
-          <button id="stnew" class="main">Créer</button>
+        <button id="stopennew" class="ghost">➕ Ajouter une playlist</button>
+        <div id="stnewbox" class="stack" hidden>
+          <h2 class="sep">Nouvelle playlist</h2>
+          <div class="row">
+            <input id="stname" type="text" placeholder="Nom de la playlist">
+            <input id="stsrc" type="text" placeholder="Premier lien (facultatif)">
+          </div>
+          <div class="row">
+            <input id="stnewpw" type="password" placeholder="Mot de passe de la playlist (4 caractères min.)" autocomplete="new-password">
+            <input id="stnewpw2" type="password" placeholder="Confirmer le mot de passe" autocomplete="new-password">
+          </div>
+          <div class="row">
+            <button id="stnew" class="main">Créer</button>
+            <button id="stnewno" class="ghost">Annuler</button>
+          </div>
         </div>
       </div>
     </div>
@@ -700,8 +706,22 @@ $('stnew').onclick = () => act(async () => {
   $('stname').value = '';
   $('stnewpw').value = '';
   $('stnewpw2').value = '';
+  $('stnewbox').hidden = true;
+  $('stopennew').hidden = false;
   return result.message;
 });
+
+$('stopennew').onclick = () => {
+  $('stnewbox').hidden = false;
+  $('stopennew').hidden = true;
+  $('stname').focus();
+};
+
+$('stnewno').onclick = () => {
+  for (const id of ['stsrc', 'stname', 'stnewpw', 'stnewpw2']) $(id).value = '';
+  $('stnewbox').hidden = true;
+  $('stopennew').hidden = false;
+};
 
 $('soundplay').onclick = () => act(async () =>
   (await api('/api/soundboard', post({ ...ctx(), soundId: $('sound').value }))).message);
