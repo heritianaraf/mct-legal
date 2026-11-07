@@ -41,7 +41,7 @@ function startWeb(bot) {
     let size = 0;
     req.on('data', chunk => {
       size += chunk.length;
-      if (size > 10000) {
+      if (size > 200000) {
         reject(fail('Requête trop grande.', 413));
         req.destroy();
         return;

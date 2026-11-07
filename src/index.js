@@ -50,7 +50,12 @@ const client = new Client({
   ]
 });
 
-const MUSIC_DIR = path.join(__dirname, '..', 'music');
+// DATA_DIR : dossier persistant (disque de l'hébergeur) qui survit aux déploiements.
+// Sans DATA_DIR, on garde l'ancien emplacement (dossier parent du code).
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, '..');
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const MUSIC_DIR = path.join(DATA_DIR, 'music');
 const UPLOAD_DIR = path.join(MUSIC_DIR, 'uploads');
 
 const MAX_UPLOAD_MB = Math.max(1, Number(process.env.MAX_UPLOAD_MB) || 100);
@@ -387,7 +392,7 @@ function cleanupTrack(track) {
 // VOLUME (par serveur, enregistré dans volumes.json)
 // ======================================
 
-const VOLUME_FILE = path.join(MUSIC_DIR, '..', 'volumes.json');
+const VOLUME_FILE = path.join(DATA_DIR, 'volumes.json');
 const DEFAULT_VOLUME = 100;
 const MAX_VOLUME = 200;
 
@@ -1271,10 +1276,10 @@ client.on(Events.InteractionCreate, async interaction => {
 // PLAYLISTS (stations) : liens Google Drive et MP3 envoyés
 // ======================================
 
-const STATIONS_FILE = path.join(MUSIC_DIR, '..', 'stations.json');
+const STATIONS_FILE = path.join(DATA_DIR, 'stations.json');
 const PLAYLIST_DIR = path.join(MUSIC_DIR, 'playlists');
 const MAX_STATIONS = 25;
-const MAX_STATION_ITEMS = 50;
+const MAX_STATION_ITEMS = 500;
 const ITEM_ICONS = { drive: '☁️', file: '🎵' };
 
 fs.mkdirSync(PLAYLIST_DIR, { recursive: true });
@@ -1348,6 +1353,9 @@ function loadStations() {
 function saveStations(all) {
   const tmp = `${STATIONS_FILE}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(all, null, 2));
+  try {
+    if (fs.existsSync(STATIONS_FILE)) fs.copyFileSync(STATIONS_FILE, `${STATIONS_FILE}.bak`);
+  } catch {}
   fs.renameSync(tmp, STATIONS_FILE);
 }
 

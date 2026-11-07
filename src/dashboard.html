@@ -344,11 +344,16 @@ summary {
         <div class="row" id="stlist">
           <select id="station" aria-label="Playlist"></select>
           <button id="stplay" class="main">Lancer</button>
+          <button id="stshow" class="ghost">Afficher la liste</button>
           <button id="stdel" class="ghost">Supprimer</button>
         </div>
         <label class="chk" id="stloopl"><input type="checkbox" id="stloop" checked> Relancer la playlist en boucle</label>
-        <input id="stpw" type="password" placeholder="Mot de passe de la playlist (pour la supprimer)" autocomplete="off">
-        <ol id="stitems"></ol>
+        <div class="row" id="stdelbox" hidden>
+          <input id="stpw" type="password" placeholder="Mot de passe de la playlist" autocomplete="off">
+          <button id="stdelok" class="main">Confirmer</button>
+          <button id="stdelno" class="ghost">Annuler</button>
+        </div>
+        <ol id="stitems" hidden></ol>
         <p id="stempty" class="empty">Aucune playlist pour ce serveur.</p>
         <div id="stadd" class="stack">
           <div class="row">
@@ -393,6 +398,8 @@ let data = { guilds: [] };
 let sounds = { guildId: null, items: [] };
 let volTouched = 0; // dernier réglage du curseur (évite que le rafraîchissement le remette en place)
 const selected = new Set(); // morceaux cochés dans la file : "index|nom"
+let showList = false;       // contenu de la playlist affiché ?
+let lastStation = null;
 const picked = new Set();   // playlists cochées
 
 async function api(url, opts = {}) {
@@ -478,7 +485,15 @@ function render() {
   $('stempty').hidden = stations.length > 0;
   $('stadd').hidden = !st;
   $('stloopl').hidden = !stations.length;
-  $('stpw').hidden = !stations.length;
+  if (!stations.length) { showList = false; $('stdelbox').hidden = true; }
+  if (lastStation !== $('station').value) {
+    lastStation = $('station').value;
+    showList = false;
+    $('stdelbox').hidden = true;
+    $('stpw').value = '';
+  }
+  $('stitems').hidden = !showList;
+  $('stshow').textContent = showList ? 'Masquer la liste' : 'Afficher la liste' + (st ? ' (' + st.items.length + ')' : '');
 
   const sig = JSON.stringify(st || null);
   if ($('stitems').dataset.sig !== sig) {
@@ -627,12 +642,30 @@ $('file').onchange = () => act(async () => {
 $('stplay').onclick = () => act(async () =>
   (await api('/api/play', post({ ...ctx(), source: 'station', value: $('station').value, loop: $('stloop').checked }))).message);
 
+$('stshow').onclick = () => {
+  showList = !showList;
+  render();
+};
+
 $('stdel').onclick = () => {
+  if (!$('station').value) return;
+  $('stdelbox').hidden = false;
+  $('stpw').focus();
+};
+
+$('stdelno').onclick = () => {
+  $('stpw').value = '';
+  $('stdelbox').hidden = true;
+};
+
+$('stdelok').onclick = () => {
   const name = $('station').value;
-  if (!name || !confirm('Supprimer la playlist « ' + name + ' » ?')) return;
+  if (!name || !$('stpw').value) return;
+  if (!confirm('Supprimer la playlist « ' + name + ' » ?')) return;
   act(async () => {
     const result = await api('/api/station/delete', post({ guildId: $('guild').value, name, password: $('stpw').value }));
     $('stpw').value = '';
+    $('stdelbox').hidden = true;
     return result.message;
   });
 };
