@@ -574,6 +574,7 @@ $('stdel').onclick = () => {
   act(async () => (await api('/api/station/delete', post({ guildId: $('guild').value, name, password: $('stpw').value }))).message);
 };
 
+
 $('stlinkbtn').onclick = () => act(async () => {
   const result = await api('/api/station/add', post({
     guildId: $('guild').value,
