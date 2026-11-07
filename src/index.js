@@ -641,7 +641,7 @@ async function ensureVoice(guild, voiceChannel, state) {
       channelId: voiceChannel.id,
       guildId: guild.id,
       adapterCreator: guild.voiceAdapterCreator,
-      selfDeaf: true
+      selfDeaf: false // Discord refuse les sons du soundboard à un bot sourd
     });
 
     state.connection.subscribe(state.player);
@@ -742,6 +742,13 @@ async function playSound(guild, voiceChannel, soundId) {
       // Erreur renvoyée par l'API Discord : on affiche sa vraie raison.
       if (error?.status !== undefined || error?.code !== undefined) {
         console.error('Soundboard refusé par Discord :', error);
+
+        if (error.code === 50167) {
+          throw new Error(
+            'Discord refuse le son : le bot est muet, sourd ou « supprimé » dans ce salon. ' +
+            'Vérifie qu’aucun rôle ne le rend muet ou sourd sur le serveur, et que ce n’est pas un salon de conférence où il n’a pas le droit de parler.'
+          );
+        }
 
         throw new Error(
           `Discord a refusé l’envoi du son : ${error.message}${error.code ? ` (code ${error.code})` : ''}.` +
