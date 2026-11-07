@@ -274,6 +274,22 @@ input[type="file"] {
     </div>
 
     <div class="card">
+      <h2>Stations</h2>
+      <div class="stack">
+        <div class="row" id="stlist">
+          <select id="station" aria-label="Station"></select>
+          <button id="stplay" class="main">Lancer</button>
+          <button id="stdel" class="ghost">Supprimer</button>
+        </div>
+        <input id="stsrc" type="text" placeholder="Playlist Spotify ou adresse d’une radio">
+        <div class="row">
+          <input id="stname" type="text" placeholder="Nom de la station (facultatif)">
+          <button id="stnew" class="main">Créer</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>File d’attente</h2>
       <ol id="queue"></ol>
       <p id="qempty" class="empty">La file est vide.</p>
@@ -329,6 +345,10 @@ function render() {
   if (g?.channelId) $('channel').value = g.channelId;
 
   fill($('track'), data.library.map(name => [name, name.replace(/\.mp3$/i, '')]));
+
+  const stations = g?.stations || [];
+  fill($('station'), stations.map(s => [s.name, (s.type === 'radio' ? '📻 ' : '🎧 ') + s.name]));
+  $('stlist').hidden = !stations.length;
 
   $('now').textContent = g?.current ? (g.paused ? '⏸ ' : '▶ ') + g.current : 'Rien en lecture';
 
@@ -393,6 +413,26 @@ $('file').onchange = () => act(async () => {
   const params = new URLSearchParams({ ...ctx(), name: file.name });
   const result = await api('/api/upload?' + params, { method: 'PUT', body: file });
   $('file').value = '';
+  return result.message;
+});
+
+$('stplay').onclick = () => act(async () =>
+  (await api('/api/play', post({ ...ctx(), source: 'station', value: $('station').value }))).message);
+
+$('stdel').onclick = () => {
+  const name = $('station').value;
+  if (!name || !confirm('Supprimer la station « ' + name + ' » ?')) return;
+  act(async () => (await api('/api/station/delete', post({ guildId: $('guild').value, name }))).message);
+};
+
+$('stnew').onclick = () => act(async () => {
+  const result = await api('/api/station', post({
+    guildId: $('guild').value,
+    source: $('stsrc').value,
+    name: $('stname').value
+  }));
+  $('stsrc').value = '';
+  $('stname').value = '';
   return result.message;
 });
 

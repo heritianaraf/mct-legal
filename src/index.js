@@ -842,7 +842,8 @@ const botApi = {
         channelId: state?.connection?.joinConfig?.channelId || null,
         current: state?.current?.name || null,
         paused: status === AudioPlayerStatus.Paused || status === AudioPlayerStatus.AutoPaused,
-        queue: state ? state.items.map(track => track.name) : []
+        queue: state ? state.items.map(track => track.name) : [],
+        stations: guildStations(guild.id).map(s => ({ name: s.name, type: s.type }))
       };
     });
   },
@@ -873,6 +874,12 @@ const botApi = {
 
       if (source === 'radio') {
         return enqueueRadio(state, String(value || ''));
+      }
+
+      if (source === 'station') {
+        const station = findStation(guildId, String(value || ''));
+        if (!station) throw new Error('Station introuvable.');
+        return (await enqueueStation(state, station)).replace(/\*\*/g, '');
       }
 
       throw new Error('Source inconnue.');
@@ -909,6 +916,19 @@ const botApi = {
       state.items.push({ name: safeName, file: filePath, ffmpeg: null, deleteOnFinish: true, deleteScheduled: false });
       return `🎶 ${safeName} ajouté à la file.`;
     });
+  },
+
+  async addStation(guildId, source, name) {
+    if (!client.guilds.cache.has(String(guildId))) throw new Error('Serveur introuvable.');
+    const station = await createStation(String(guildId), source, name);
+    return `✅ Station ${station.name} créée (${station.info}).`;
+  },
+
+  removeStation(guildId, name) {
+    if (!client.guilds.cache.has(String(guildId))) throw new Error('Serveur introuvable.');
+    const station = deleteStation(String(guildId), name);
+    if (!station) throw new Error('Station introuvable.');
+    return `🗑️ Station ${station.name} supprimée.`;
   },
 
   async control(guildId, action) {
@@ -1261,6 +1281,37 @@ async function buildStation(source, customName) {
   };
 }
 
+async function createStation(guildId, source, customName) {
+  if (guildStations(guildId).length >= MAX_STATIONS) {
+    throw new Error(`Maximum ${MAX_STATIONS} stations par serveur. Supprime-en une d’abord.`);
+  }
+
+  const { info, ...saved } = await buildStation(String(source || ''), String(customName || '').trim());
+  saved.name = saved.name.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 50) || 'Station';
+
+  const all = loadStations();
+  const list = all[guildId] || [];
+
+  if (list.some(s => s.name.toLowerCase() === saved.name.toLowerCase())) {
+    throw new Error(`Une station s’appelle déjà « ${saved.name} ». Choisis un autre nom.`);
+  }
+
+  all[guildId] = [...list, saved];
+  saveStations(all);
+
+  return { name: saved.name, info };
+}
+
+function deleteStation(guildId, name) {
+  const station = findStation(guildId, name);
+  if (!station) return null;
+
+  const all = loadStations();
+  all[guildId] = (all[guildId] || []).filter(s => s.name !== station.name);
+  saveStations(all);
+  return station;
+}
+
 async function enqueueStation(state, station) {
   if (station.type === 'radio') return enqueueRadio(state, station.value);
   return spotifyReport(await enqueueSpotify(state, station.value));
@@ -1283,28 +1334,14 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isModalSubmit() && interaction.customId === 'station-create') {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-      const source = interaction.fields.getTextInputValue('source');
-      const customName = interaction.fields.getTextInputValue('name').trim();
-      const all = loadStations();
-      const list = all[interaction.guildId] || [];
-
-      if (list.length >= MAX_STATIONS) {
-        throw new Error(`Maximum ${MAX_STATIONS} stations par serveur. Supprime-en une avec /station supprimer.`);
-      }
-
-      const station = await buildStation(source, customName);
-      station.name = station.name.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 50) || 'Station';
-
-      if (list.some(s => s.name.toLowerCase() === station.name.toLowerCase())) {
-        throw new Error(`Une station s’appelle déjà « ${station.name} ». Choisis un autre nom.`);
-      }
-
-      const { info, ...saved } = station;
-      all[interaction.guildId] = [...list, saved];
-      saveStations(all);
+      const { name, info } = await createStation(
+        interaction.guildId,
+        interaction.fields.getTextInputValue('source'),
+        interaction.fields.getTextInputValue('name')
+      );
 
       return interaction.editReply(
-        `✅ Station **${saved.name}** créée (${info}).\nLance-la avec \`/station jouer\`.`
+        `✅ Station **${name}** créée (${info}).\nLance-la avec \`/station jouer\`.`
       );
     }
 
@@ -1367,9 +1404,7 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ content: '❌ Station introuvable.', flags: MessageFlags.Ephemeral });
       }
 
-      const all = loadStations();
-      all[guildId] = all[guildId].filter(s => s !== station && s.name !== station.name);
-      saveStations(all);
+      deleteStation(guildId, station.name);
       return interaction.reply({ content: `🗑️ Station **${station.name}** supprimée.`, flags: MessageFlags.Ephemeral });
     }
 
