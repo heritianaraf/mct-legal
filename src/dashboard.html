@@ -208,7 +208,6 @@ input[type="file"] {
     display: none;
 }
 
-
 .vol {
     display: flex;
     gap: 12px;
@@ -314,6 +313,16 @@ summary {
     </div>
 
     <div class="card">
+      <h2>Soundboard du serveur</h2>
+      <div class="row">
+        <select id="sound" aria-label="Son"></select>
+        <button id="soundplay" class="main">Jouer</button>
+        <button id="soundrefresh" class="ghost" title="Actualiser la liste">↻</button>
+      </div>
+      <p id="snone" class="empty" hidden>Aucun son dans la table de mixage de ce serveur.</p>
+    </div>
+
+    <div class="card">
       <h2>Playlists</h2>
       <div class="stack">
         <div class="row" id="stlist">
@@ -365,6 +374,7 @@ summary {
 <script>
 const $ = id => document.getElementById(id);
 let data = { guilds: [] };
+let sounds = { guildId: null, items: [] };
 let volTouched = 0; // dernier réglage du curseur (évite que le rafraîchissement le remette en place)
 const selected = new Set(); // morceaux cochés dans la file : "index|nom"
 const picked = new Set();   // playlists cochées
@@ -413,9 +423,32 @@ function queueAction(index, name, action) {
   act(async () => (await api('/api/queue', post({ guildId: $('guild').value, index, name, action }))).message);
 }
 
+async function loadSounds(force) {
+  const guildId = $('guild').value;
+  if (!guildId) return;
+
+  sounds = { guildId, items: [] };
+  try {
+    const result = await api('/api/soundboard?guildId=' + encodeURIComponent(guildId) + (force ? '&force=1' : ''));
+    sounds = { guildId, items: result.sounds || [] };
+  } catch (error) {
+    msg(error.message, true);
+  }
+  renderSounds();
+}
+
+function renderSounds() {
+  fill($('sound'), sounds.items.map(s => [s.id, (s.emoji || '🔊') + ' ' + s.name]));
+  $('snone').hidden = sounds.items.length > 0;
+  $('soundplay').hidden = sounds.items.length === 0;
+}
+
 function render() {
   fill($('guild'), data.guilds.map(g => [g.id, g.name]));
   const g = data.guilds.find(x => x.id === $('guild').value);
+
+  if (sounds.guildId !== $('guild').value) loadSounds();
+  renderSounds();
 
   fill($('channel'), (g?.channels || []).map(c => [c.id, c.name]));
   if (g?.channelId) $('channel').value = g.channelId;
@@ -620,6 +653,11 @@ $('stnew').onclick = () => act(async () => {
   $('stnewpw2').value = '';
   return result.message;
 });
+
+$('soundplay').onclick = () => act(async () =>
+  (await api('/api/soundboard', post({ ...ctx(), soundId: $('sound').value }))).message);
+
+$('soundrefresh').onclick = () => loadSounds(true);
 
 $('qall').onclick = () => {
   const g = data.guilds.find(x => x.id === $('guild').value);

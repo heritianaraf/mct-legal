@@ -63,6 +63,18 @@ const commands = [
         .setRequired(false)
     ),
 
+  // SOUNDBOARD
+  new SlashCommandBuilder()
+    .setName('soundboard')
+    .setDescription('Jouer un son de la table de mixage du serveur')
+    .addStringOption(option =>
+      option
+        .setName('son')
+        .setDescription('Son à jouer')
+        .setAutocomplete(true)
+        .setRequired(true)
+    ),
+
   // STATION (playlists)
   new SlashCommandBuilder()
     .setName('station')
@@ -196,14 +208,13 @@ async function main() {
     { body: commands }
   );
 
-  
   console.log('================================');
   console.log('MCT MUSIC : commandes enregistrées');
   console.log('/play fichier');
   console.log('/play url');
   console.log('/station creer /ajouter /retirer /jouer /boucle /liste /supprimer');
   console.log('/pause /resume /stop');
-  console.log('/skip /queue /volume');
+  console.log('/skip /queue /volume /soundboard');
   console.log('================================');
 }
 

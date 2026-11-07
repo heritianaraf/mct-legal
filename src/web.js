@@ -58,7 +58,6 @@ function startWeb(bot) {
     req.on('error', reject);
   });
 
-  
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
 
@@ -110,6 +109,16 @@ function startWeb(bot) {
       if (url.pathname === '/api/play' && req.method === 'POST') {
         const { guildId, channelId, source, value, loop } = await readJson(req);
         return send(res, 200, { message: await bot.play(guildId, channelId, source, value, loop) });
+      }
+
+      if (url.pathname === '/api/soundboard' && req.method === 'GET') {
+        const sounds = await bot.soundList(url.searchParams.get('guildId'), url.searchParams.get('force') === '1');
+        return send(res, 200, { sounds });
+      }
+
+      if (url.pathname === '/api/soundboard' && req.method === 'POST') {
+        const { guildId, channelId, soundId } = await readJson(req);
+        return send(res, 200, { message: await bot.sound(guildId, channelId, soundId) });
       }
 
       if (url.pathname === '/api/volume' && req.method === 'POST') {

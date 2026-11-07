@@ -657,6 +657,82 @@ function connectVoice(interaction, state) {
 }
 
 // ======================================
+// SOUNDBOARD DU SERVEUR (table de mixage Discord)
+// ======================================
+
+const soundCache = new Map(); // guildId -> { at, sounds }
+
+// Liste les sons de la table de mixage du serveur (en cache 60 s).
+async function listSounds(guildId, force = false) {
+  const id = String(guildId);
+  const cached = soundCache.get(id);
+  if (!force && cached && Date.now() - cached.at < 60000) return cached.sounds;
+
+  let data;
+  try {
+    data = await client.rest.get(`/guilds/${id}/soundboard-sounds`);
+  } catch (error) {
+    throw new Error(`Impossible de lire la table de mixage du serveur (${error.message}).`);
+  }
+
+  const sounds = (data?.items || [])
+    .filter(sound => sound?.sound_id && sound.available !== false)
+    .map(sound => ({
+      id: String(sound.sound_id),
+      name: String(sound.name || 'Son'),
+      emoji: sound.emoji_id ? '' : String(sound.emoji_name || '')
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  soundCache.set(id, { at: Date.now(), sounds });
+  return sounds;
+}
+
+// Le bot quitte le salon 20 s après un son si rien d'autre n'est en lecture.
+function leaveIfIdle(guildId, state) {
+  setTimeout(() => {
+    if (queues.get(guildId) === state && !state.current && state.items.length === 0) {
+      stopGuild(guildId);
+    }
+  }, 20000).unref?.();
+}
+
+// Joue un son de la table de mixage : le bot rejoint le salon si besoin.
+// Discord mélange le son avec la musique en cours, les deux s'entendent en même temps.
+async function playSound(guild, voiceChannel, soundId) {
+  const sound = (await listSounds(guild.id)).find(item => item.id === String(soundId));
+  if (!sound) throw new Error('Son introuvable dans la table de mixage de ce serveur.');
+
+  let state = queues.get(guild.id);
+  if (!state) {
+    state = createMusicState(guild.id, null);
+    queues.set(guild.id, state);
+  }
+
+  try {
+    await ensureVoice(guild, voiceChannel, state);
+
+    try {
+      await client.rest.post(`/channels/${voiceChannel.id}/send-soundboard-sound`, {
+        body: { sound_id: sound.id }
+      });
+    } catch (error) {
+      if (error?.status === 403 || error?.code === 50013) {
+        throw new Error(
+          'Le bot n’a pas la permission « Utiliser la table de mixage » (ni « Parler ») dans ce salon vocal.'
+        );
+      }
+      throw error;
+    }
+  } finally {
+    if (!state.connection) stopGuild(guild.id);
+    else leaveIfIdle(guild.id, state);
+  }
+
+  return sound.name;
+}
+
+// ======================================
 // ARRÊT / API POUR L'INTERFACE WEB
 // ======================================
 
@@ -711,6 +787,20 @@ const botApi = {
   volume(guildId, level) {
     assertGuild(guildId);
     return `🔊 Volume : ${setVolume(guildId, level)}%`;
+  },
+
+  soundList(guildId, force) {
+    assertGuild(guildId);
+    return listSounds(guildId, force);
+  },
+
+  async sound(guildId, channelId, soundId) {
+    const guild = client.guilds.cache.get(String(guildId));
+    const channel = guild?.channels.cache.get(String(channelId));
+
+    if (!guild || !channel?.isVoiceBased()) throw new Error('Serveur ou salon vocal introuvable.');
+
+    return `🔊 ${await playSound(guild, channel, soundId)} envoyé.`;
   },
 
   getState() {
@@ -1155,7 +1245,6 @@ const MAX_STATION_ITEMS = 50;
 const ITEM_ICONS = { drive: '☁️', file: '🎵' };
 
 fs.mkdirSync(PLAYLIST_DIR, { recursive: true });
-
 
 // ======================================
 // MOT DE PASSE DES PLAYLISTS (un par playlist, créé avec elle)
@@ -1749,6 +1838,50 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 // ======================================
+// COMMANDE /soundboard
+// ======================================
+
+client.on(Events.InteractionCreate, async interaction => {
+  try {
+    if (interaction.commandName !== 'soundboard') return;
+
+    // Autocomplétion : sons du serveur
+    if (interaction.isAutocomplete()) {
+      const typed = interaction.options.getFocused().toLowerCase();
+      const sounds = await listSounds(interaction.guildId).catch(() => []);
+
+      return interaction.respond(
+        sounds
+          .filter(sound => sound.name.toLowerCase().includes(typed))
+          .slice(0, 25)
+          .map(sound => ({ name: `${sound.emoji} ${sound.name}`.trim().slice(0, 100), value: sound.id }))
+      );
+    }
+
+    if (!interaction.isChatInputCommand()) return;
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    const name = await playSound(
+      interaction.guild,
+      interaction.member?.voice?.channel,
+      interaction.options.getString('son')
+    );
+
+    return interaction.editReply(`🔊 **${name}** envoyé dans le salon vocal.`);
+  } catch (error) {
+    console.error('Erreur soundboard :', error);
+
+    const message = `❌ ${error.message}`;
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(message).catch(() => {});
+    } else if (interaction.isRepliable?.()) {
+      await interaction.reply({ content: message, flags: MessageFlags.Ephemeral }).catch(() => {});
+    }
+  }
+});
+
+// ======================================
 // DÉMARRAGE
 // ======================================
 
@@ -1758,6 +1891,7 @@ client.once(Events.ClientReady, readyClient => {
   console.log('✅ Lecture des MP3 joints aux commandes /play activée');
   console.log('✅ Lecture des MP3 et dossiers publics Google Drive activée');
   console.log('✅ Playlists (/station) : Google Drive et MP3');
+  console.log('✅ Soundboard du serveur (/soundboard)');
   console.log('================================');
 });
 
