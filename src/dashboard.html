@@ -129,6 +129,14 @@ button:hover,
     opacity: .85;
 }
 
+.chk {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    color: var(--mut);
+    font: .9rem system-ui, sans-serif;
+}
+
 .sep {
     margin: 8px 0 0;
 }
@@ -255,6 +263,7 @@ input[type="file"] {
         <button id="resume" class="ghost">▶ Reprendre</button>
         <button id="skip" class="ghost">⏭ Suivant</button>
         <button id="stop" class="ghost">⏹ Arrêter</button>
+        <button id="loop" class="ghost" hidden>🔁 Boucle</button>
       </div>
     </div>
 
@@ -291,6 +300,7 @@ input[type="file"] {
           <button id="stplay" class="main">Lancer</button>
           <button id="stdel" class="ghost">Supprimer</button>
         </div>
+        <label class="chk" id="stloopl"><input type="checkbox" id="stloop" checked> Relancer la playlist en boucle</label>
         <ol id="stitems"></ol>
         <p id="stempty" class="empty">Aucune playlist pour ce serveur.</p>
         <div id="stadd" class="stack">
@@ -378,6 +388,7 @@ function render() {
   $('stlist').hidden = !stations.length;
   $('stempty').hidden = stations.length > 0;
   $('stadd').hidden = !st;
+  $('stloopl').hidden = !stations.length;
 
   const sig = JSON.stringify(st || null);
   if ($('stitems').dataset.sig !== sig) {
@@ -396,6 +407,9 @@ function render() {
   }
 
   $('now').textContent = g?.current ? (g.paused ? '⏸ ' : '▶ ') + g.current : 'Rien en lecture';
+
+  $('loop').hidden = !g?.station;
+  $('loop').textContent = g?.loop ? '🔁 Boucle activée' : '🔁 Boucle désactivée';
 
   const items = (g?.queue || []).map(name => {
     const li = document.createElement('li');
@@ -462,7 +476,7 @@ $('file').onchange = () => act(async () => {
 });
 
 $('stplay').onclick = () => act(async () =>
-  (await api('/api/play', post({ ...ctx(), source: 'station', value: $('station').value }))).message);
+  (await api('/api/play', post({ ...ctx(), source: 'station', value: $('station').value, loop: $('stloop').checked }))).message);
 
 $('stdel').onclick = () => {
   const name = $('station').value;
@@ -501,6 +515,13 @@ $('stnew').onclick = () => act(async () => {
 });
 
 $('station').onchange = render;
+
+$('loop').onclick = () => {
+  const g = data.guilds.find(x => x.id === $('guild').value);
+  act(async () => {
+    await api('/api/control', post({ guildId: $('guild').value, action: g?.loop ? 'loop-off' : 'loop-on' }));
+  });
+};
 
 ['pause', 'resume', 'skip', 'stop'].forEach(action => {
   $(action).onclick = () => act(async () => {

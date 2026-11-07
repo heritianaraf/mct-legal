@@ -421,7 +421,11 @@ function createMusicState(guildId, textChannel) {
     connection: null,
     items: [],
     current: null,
-    textChannel
+    textChannel,
+    station: null,
+    loop: false,
+    lastRefill: 0,
+    looping: false
   };
 
   player.on(AudioPlayerStatus.Idle, () => {
@@ -458,7 +462,10 @@ function createMusicState(guildId, textChannel) {
 function startTrack(guildId) {
   const state = queues.get(guildId);
 
-  if (!state || state.current || state.items.length === 0) {
+  if (!state || state.current) return;
+
+  if (state.items.length === 0) {
+    if (state.loop && state.station && !state.looping) refillLoop(guildId, state);
     return;
   }
 
@@ -493,6 +500,44 @@ function startTrack(guildId) {
   }
 
   playTrack(guildId, state, track);
+}
+
+// Boucle : quand tout est lu, la playlist est relue depuis sa version enregistrée.
+async function refillLoop(guildId, state) {
+  const stop = text => {
+    state.loop = false;
+    state.textChannel?.send(text).catch(() => {});
+  };
+
+  // Garde-fou : si un tour dure moins de 10 s (éléments illisibles), on arrête.
+  if (Date.now() - state.lastRefill < 10000) {
+    return stop('🔁 Boucle arrêtée : la playlist se termine trop vite (éléments illisibles ?).');
+  }
+
+  state.looping = true;
+
+  try {
+    const station = findStation(guildId, state.station);
+    if (!station || !station.items.length) {
+      return stop('🔁 Boucle arrêtée : la playlist est introuvable ou vide.');
+    }
+
+    state.lastRefill = Date.now();
+    await enqueueStation(state, station);
+  } catch (error) {
+    return stop(`🔁 Boucle arrêtée : ${error.message}`);
+  } finally {
+    state.looping = false;
+  }
+
+  if (queues.get(guildId) !== state || !state.loop) return;
+
+  if (state.items.length === 0) {
+    return stop('🔁 Boucle arrêtée : aucun morceau lisible dans la playlist.');
+  }
+
+  state.textChannel?.send(`🔁 Playlist **${state.station}** : on recommence.`).catch(() => {});
+  startTrack(guildId);
 }
 
 function playTrack(guildId, state, track) {
@@ -847,6 +892,8 @@ const botApi = {
         current: state?.current?.name || null,
         paused: status === AudioPlayerStatus.Paused || status === AudioPlayerStatus.AutoPaused,
         queue: state ? state.items.map(track => track.name) : [],
+        station: state?.station || null,
+        loop: Boolean(state?.loop),
         stations: guildStations(guild.id).map(s => ({
           name: s.name,
           items: s.items.map(item => ({ type: item.type, label: item.label }))
@@ -855,7 +902,7 @@ const botApi = {
     });
   },
 
-  play(guildId, channelId, source, value) {
+  play(guildId, channelId, source, value, loop) {
     return webEnqueue(guildId, channelId, async state => {
       if (source === 'local') {
         const file = findMusic(String(value || ''));
@@ -885,8 +932,13 @@ const botApi = {
 
       if (source === 'station') {
         const station = findStation(guildId, String(value || ''));
-        if (!station) throw new Error('Station introuvable.');
-        return (await enqueueStation(state, station)).replace(/\*\*/g, '');
+        if (!station) throw new Error('Playlist introuvable.');
+
+        const message = (await enqueueStation(state, station)).replace(/\*\*/g, '');
+        state.station = station.name;
+        state.loop = loop !== false;
+        state.lastRefill = Date.now();
+        return state.loop ? `${message}\n🔁 Boucle activée.` : message;
       }
 
       throw new Error('Source inconnue.');
@@ -968,6 +1020,12 @@ const botApi = {
     else if (action === 'resume') state.player.unpause();
     else if (action === 'skip') state.player.stop(true);
     else if (action === 'stop') stopGuild(String(guildId));
+    else if (action === 'loop-on') {
+      if (!state.station) throw new Error('Lance d’abord une playlist.');
+      state.loop = true;
+      startTrack(String(guildId));
+    }
+    else if (action === 'loop-off') state.loop = false;
     else throw new Error('Action inconnue.');
   }
 };
@@ -1658,6 +1716,22 @@ client.on(Events.InteractionCreate, async interaction => {
       });
     }
 
+    if (sub === 'boucle') {
+      const state = queues.get(guildId);
+      if (!state?.station) {
+        return interaction.reply({
+          content: '❌ Lance d’abord une playlist avec /station jouer.',
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      const on = interaction.options.getBoolean('actif');
+      state.loop = on;
+      if (on) startTrack(guildId);
+
+      return interaction.reply(`🔁 Boucle ${on ? 'activée' : 'désactivée'} pour **${state.station}**.`);
+    }
+
     if (sub === 'supprimer') {
       const station = findStation(guildId, interaction.options.getString('nom'));
       if (!station) {
@@ -1686,8 +1760,16 @@ client.on(Events.InteractionCreate, async interaction => {
 
       try {
         await connectVoice(interaction, state);
+        const loop = interaction.options.getBoolean('boucle') ?? true;
         const message = await enqueueStation(state, station);
-        await interaction.editReply(message.slice(0, 1900));
+
+        state.station = station.name;
+        state.loop = loop;
+        state.lastRefill = Date.now();
+
+        await interaction.editReply(
+          `${message.slice(0, 1800)}\n🔁 Boucle ${loop ? 'activée' : 'désactivée'}.`
+        );
         startTrack(guildId);
       } finally {
         if (!state.current && state.items.length === 0) stopGuild(guildId);

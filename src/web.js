@@ -107,8 +107,8 @@ function startWeb(bot) {
       }
 
       if (url.pathname === '/api/play' && req.method === 'POST') {
-        const { guildId, channelId, source, value } = await readJson(req);
-        return send(res, 200, { message: await bot.play(guildId, channelId, source, value) });
+        const { guildId, channelId, source, value, loop } = await readJson(req);
+        return send(res, 200, { message: await bot.play(guildId, channelId, source, value, loop) });
       }
 
       if (url.pathname === '/api/control' && req.method === 'POST') {

@@ -136,6 +136,23 @@ const commands = [
             .setAutocomplete(true)
             .setRequired(true)
         )
+        .addBooleanOption(option =>
+          option
+            .setName('boucle')
+            .setDescription('Relancer la playlist quand elle est finie (activé par défaut)')
+            .setRequired(false)
+        )
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('boucle')
+        .setDescription('Activer ou désactiver la boucle de la playlist en cours')
+        .addBooleanOption(option =>
+          option
+            .setName('actif')
+            .setDescription('Activer la boucle ?')
+            .setRequired(true)
+        )
     )
     .addSubcommand(sub =>
       sub
@@ -196,7 +213,7 @@ async function main() {
   console.log('/play url');
   console.log('/play spotify');
   console.log('/play radio');
-  console.log('/station creer /ajouter /retirer /jouer /liste /supprimer');
+  console.log('/station creer /ajouter /retirer /jouer /boucle /liste /supprimer');
   console.log('/pause /resume /stop');
   console.log('/skip /queue /list');
   console.log('================================');
