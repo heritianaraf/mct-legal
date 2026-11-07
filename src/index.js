@@ -46,6 +46,7 @@ const UPLOAD_DIR = path.join(MUSIC_DIR, 'uploads');
 
 const MAX_UPLOAD_MB = Math.max(1, Number(process.env.MAX_UPLOAD_MB) || 100);
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+const MAX_DRIVE_FOLDER_TRACKS = 100;
 
 const queues = new Map();
 
@@ -177,8 +178,101 @@ function extractGoogleDriveFileId(rawUrl) {
   return fileId;
 }
 
+function extractGoogleDriveFolderId(rawUrl) {
+  let url;
+
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== 'https:' || url.hostname !== 'drive.google.com') return null;
+
+  const match = url.pathname.match(/\/folders\/([a-zA-Z0-9_-]{10,})/);
+  return match ? match[1] : null;
+}
+
+async function listDriveFolderMp3(folderId) {
+  const apiKey = process.env.GOOGLE_API_KEY;
+  if (!apiKey) {
+    throw new Error('Définis GOOGLE_API_KEY dans .env pour lire un dossier Google Drive.');
+  }
+
+  const files = [];
+  let pageToken = '';
+
+  do {
+    const params = new URLSearchParams({
+      q: `'${folderId}' in parents and trashed = false`,
+      fields: 'nextPageToken,files(id,name,mimeType)',
+      pageSize: '1000',
+      orderBy: 'name',
+      key: apiKey
+    });
+    if (pageToken) params.set('pageToken', pageToken);
+
+    const response = await fetch(`https://www.googleapis.com/drive/v3/files?${params}`, {
+      signal: AbortSignal.timeout(15000)
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        'Impossible de lire ce dossier Google Drive. Vérifie qu’il est partagé en « Toute personne disposant du lien » et que GOOGLE_API_KEY est valide.'
+      );
+    }
+
+    const data = await response.json();
+    files.push(...(data.files || []));
+    pageToken = data.nextPageToken || '';
+  } while (pageToken && files.length < 1000);
+
+  return files
+    .filter(file => /\.mp3$/i.test(file.name) || file.mimeType === 'audio/mpeg')
+    .slice(0, MAX_DRIVE_FOLDER_TRACKS);
+}
+
+// Un lien de dossier ajoute tous les MP3 (téléchargés un par un, au moment de les lire).
+// Un lien de fichier garde le comportement habituel.
+async function enqueueDrive(state, rawUrl) {
+  const folderId = extractGoogleDriveFolderId(rawUrl);
+
+  if (folderId) {
+    const files = await listDriveFolderMp3(folderId);
+    if (!files.length) throw new Error('Aucun MP3 trouvé dans ce dossier Google Drive.');
+
+    for (const file of files) {
+      state.items.push({
+        name: path.parse(file.name).name,
+        driveId: file.id,
+        file: null,
+        ffmpeg: null,
+        deleteOnFinish: true,
+        deleteScheduled: false
+      });
+    }
+
+    return `📁 ${files.length} MP3 du dossier Google Drive ajoutés à la file.`;
+  }
+
+  const filePath = await downloadGoogleDriveMp3(rawUrl);
+
+  state.items.push({
+    name: 'Musique Google Drive',
+    file: filePath,
+    ffmpeg: null,
+    deleteOnFinish: true,
+    deleteScheduled: false
+  });
+
+  return '🎶 Musique Google Drive ajoutée à la file.';
+}
+
 async function downloadGoogleDriveMp3(rawUrl) {
-  const fileId = extractGoogleDriveFileId(rawUrl);
+  return downloadDriveFileById(extractGoogleDriveFileId(rawUrl));
+}
+
+async function downloadDriveFileById(fileId) {
   const downloadUrl = `https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}`;
 
   const response = await fetch(downloadUrl, {
@@ -351,6 +445,34 @@ function startTrack(guildId) {
 
   console.log('🎵 Lecture :', track.name);
 
+  if (track.driveId && !track.file) {
+    downloadDriveFileById(track.driveId)
+      .then(filePath => {
+        track.file = filePath;
+
+        if (state.current !== track) {
+          deleteUploadedFile(filePath);
+          return;
+        }
+
+        playTrack(guildId, state, track);
+      })
+      .catch(error => {
+        console.error('Erreur Google Drive :', error.message);
+
+        if (state.current === track) {
+          state.current = null;
+          state.textChannel?.send(`❌ ${track.name} : ${error.message}`).catch(() => {});
+          startTrack(guildId);
+        }
+      });
+    return;
+  }
+
+  playTrack(guildId, state, track);
+}
+
+function playTrack(guildId, state, track) {
   const ffmpeg = spawn(ffmpegPath || 'ffmpeg', [
     '-hide_banner',
     '-loglevel', 'error',
@@ -605,16 +727,7 @@ const botApi = {
       }
 
       if (source === 'url') {
-        const filePath = await downloadGoogleDriveMp3(String(value || ''));
-
-        state.items.push({
-          name: 'Musique Google Drive',
-          file: filePath,
-          ffmpeg: null,
-          deleteOnFinish: true,
-          deleteScheduled: false
-        });
-        return '🎶 Musique Google Drive ajoutée à la file.';
+        return enqueueDrive(state, String(value || ''));
       }
 
       throw new Error('Source inconnue.');
@@ -763,6 +876,13 @@ client.on(Events.InteractionCreate, async interaction => {
           return;
 
         } else if (rawUrl) {
+          if (extractGoogleDriveFolderId(rawUrl)) {
+            const message = await enqueueDrive(state, rawUrl);
+            await interaction.editReply(message);
+            startTrack(guildId);
+            return;
+          }
+
           const filePath = await downloadGoogleDriveMp3(rawUrl);
 
           newTrack = {
