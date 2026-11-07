@@ -18,30 +18,34 @@ const commands = [
         .setDescription('MP3 depuis votre ordinateur')
         .setRequired(false)
     )
+    /*
     .addStringOption(option =>
       option
         .setName('nom')
         .setDescription('Nom du MP3 dans le dossier music')
         .setRequired(false)
     )
+    */
     .addStringOption(option =>
       option
         .setName('url')
         .setDescription('Lien Google Drive vers un MP3 ou un dossier de MP3')
         .setRequired(false)
-    )
+    ),
+    /*
     .addStringOption(option =>
       option
         .setName('spotify')
         .setDescription('Lien Spotify (morceau, album ou playlist) retrouvé dans tes MP3')
         .setRequired(false)
     )
+        
     .addStringOption(option =>
       option
         .setName('radio')
         .setDescription('Adresse directe d’une radio / flux audio (Icecast, Shoutcast, HLS)')
         .setRequired(false)
-    ),
+    )*/
 
   // PAUSE
   new SlashCommandBuilder()
@@ -80,7 +84,7 @@ const commands = [
     .addSubcommand(sub =>
       sub
         .setName('creer')
-        .setDescription('Créer une playlist (Spotify, Google Drive ou radio)')
+        .setDescription('Créer une playlist Google Drive)')
     )
     .addSubcommand(sub =>
       sub
