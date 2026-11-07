@@ -129,6 +129,16 @@ button:hover,
     opacity: .85;
 }
 
+.sep {
+    margin: 8px 0 0;
+}
+
+.rm {
+    padding: 2px 8px;
+    margin-left: 8px;
+    font-size: .8rem;
+}
+
 button:disabled {
     opacity: .5;
     cursor: wait;
@@ -274,16 +284,26 @@ input[type="file"] {
     </div>
 
     <div class="card">
-      <h2>Stations</h2>
+      <h2>Playlists</h2>
       <div class="stack">
         <div class="row" id="stlist">
-          <select id="station" aria-label="Station"></select>
+          <select id="station" aria-label="Playlist"></select>
           <button id="stplay" class="main">Lancer</button>
           <button id="stdel" class="ghost">Supprimer</button>
         </div>
-        <input id="stsrc" type="text" placeholder="Playlist Spotify ou adresse d’une radio">
+        <ol id="stitems"></ol>
+        <p id="stempty" class="empty">Aucune playlist pour ce serveur.</p>
+        <div id="stadd" class="stack">
+          <div class="row">
+            <input id="stlink" type="text" placeholder="Ajouter : lien Spotify, Google Drive ou radio">
+            <button id="stlinkbtn" class="main">Ajouter</button>
+          </div>
+          <label class="file">Ajouter un MP3 depuis mon PC ou TELEPHONE<input id="stfile" type="file" accept=".mp3,audio/mpeg"></label>
+        </div>
+        <h2 class="sep">Nouvelle playlist</h2>
         <div class="row">
-          <input id="stname" type="text" placeholder="Nom de la station (facultatif)">
+          <input id="stname" type="text" placeholder="Nom de la playlist">
+          <input id="stsrc" type="text" placeholder="Premier lien (facultatif)">
           <button id="stnew" class="main">Créer</button>
         </div>
       </div>
@@ -337,6 +357,10 @@ function fill(select, items) {
   if (items.some(item => item[0] === previous)) select.value = previous;
 }
 
+function removeItem(name, index) {
+  act(async () => (await api('/api/station/remove-item', post({ guildId: $('guild').value, name, index }))).message);
+}
+
 function render() {
   fill($('guild'), data.guilds.map(g => [g.id, g.name]));
   const g = data.guilds.find(x => x.id === $('guild').value);
@@ -347,8 +371,29 @@ function render() {
   fill($('track'), data.library.map(name => [name, name.replace(/\.mp3$/i, '')]));
 
   const stations = g?.stations || [];
-  fill($('station'), stations.map(s => [s.name, (s.type === 'radio' ? '📻 ' : '🎧 ') + s.name]));
+  const icons = { radio: '📻', spotify: '🎧', drive: '☁️', file: '🎵' };
+  fill($('station'), stations.map(s => [s.name, s.name + ' (' + s.items.length + ')']));
+
+  const st = stations.find(s => s.name === $('station').value);
   $('stlist').hidden = !stations.length;
+  $('stempty').hidden = stations.length > 0;
+  $('stadd').hidden = !st;
+
+  const sig = JSON.stringify(st || null);
+  if ($('stitems').dataset.sig !== sig) {
+    $('stitems').dataset.sig = sig;
+    $('stitems').replaceChildren(...(st?.items || []).map((item, index) => {
+      const li = document.createElement('li');
+      li.append((icons[item.type] || '•') + ' ' + item.label);
+      const rm = document.createElement('button');
+      rm.className = 'ghost rm';
+      rm.textContent = '✕';
+      rm.title = 'Retirer';
+      rm.onclick = () => removeItem(st.name, index);
+      li.append(rm);
+      return li;
+    }));
+  }
 
   $('now').textContent = g?.current ? (g.paused ? '⏸ ' : '▶ ') + g.current : 'Rien en lecture';
 
@@ -421,9 +466,28 @@ $('stplay').onclick = () => act(async () =>
 
 $('stdel').onclick = () => {
   const name = $('station').value;
-  if (!name || !confirm('Supprimer la station « ' + name + ' » ?')) return;
+  if (!name || !confirm('Supprimer la playlist « ' + name + ' » ?')) return;
   act(async () => (await api('/api/station/delete', post({ guildId: $('guild').value, name }))).message);
 };
+
+$('stlinkbtn').onclick = () => act(async () => {
+  const result = await api('/api/station/add', post({
+    guildId: $('guild').value,
+    name: $('station').value,
+    source: $('stlink').value
+  }));
+  $('stlink').value = '';
+  return result.message;
+});
+
+$('stfile').onchange = () => act(async () => {
+  const file = $('stfile').files[0];
+  if (!file) return '';
+  const params = new URLSearchParams({ guildId: $('guild').value, name: $('station').value, file: file.name });
+  const result = await api('/api/station/upload?' + params, { method: 'PUT', body: file });
+  $('stfile').value = '';
+  return result.message;
+});
 
 $('stnew').onclick = () => act(async () => {
   const result = await api('/api/station', post({
@@ -435,6 +499,8 @@ $('stnew').onclick = () => act(async () => {
   $('stname').value = '';
   return result.message;
 });
+
+$('station').onchange = render;
 
 ['pause', 'resume', 'skip', 'stop'].forEach(action => {
   $(action).onclick = () => act(async () => {

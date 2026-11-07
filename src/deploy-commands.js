@@ -73,23 +73,66 @@ const commands = [
     .setName('list')
     .setDescription('Afficher les MP3 disponibles'),
 
-  // STATION
+  // STATION (playlists)
   new SlashCommandBuilder()
     .setName('station')
-    .setDescription('Créer et lancer tes stations')
+    .setDescription('Créer et gérer tes playlists')
     .addSubcommand(sub =>
       sub
         .setName('creer')
-        .setDescription('Créer une nouvelle station (playlist Spotify ou radio)')
+        .setDescription('Créer une playlist (Spotify, Google Drive ou radio)')
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('ajouter')
+        .setDescription('Ajouter un MP3 ou un lien à une playlist')
+        .addStringOption(option =>
+          option
+            .setName('nom')
+            .setDescription('Playlist existante (ou un nouveau nom pour la créer)')
+            .setAutocomplete(true)
+            .setRequired(true)
+        )
+        .addAttachmentOption(option =>
+          option
+            .setName('fichier')
+            .setDescription('MP3 depuis ton ordinateur ou ton téléphone')
+            .setRequired(false)
+        )
+        .addStringOption(option =>
+          option
+            .setName('lien')
+            .setDescription('Lien Spotify, Google Drive ou radio')
+            .setRequired(false)
+        )
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('retirer')
+        .setDescription('Retirer un élément d’une playlist')
+        .addStringOption(option =>
+          option
+            .setName('nom')
+            .setDescription('Nom de la playlist')
+            .setAutocomplete(true)
+            .setRequired(true)
+        )
+        .addIntegerOption(option =>
+          option
+            .setName('numero')
+            .setDescription('Numéro de l’élément (voir /station liste)')
+            .setMinValue(1)
+            .setRequired(true)
+        )
     )
     .addSubcommand(sub =>
       sub
         .setName('jouer')
-        .setDescription('Lancer une station')
+        .setDescription('Lancer une playlist')
         .addStringOption(option =>
           option
             .setName('nom')
-            .setDescription('Nom de la station')
+            .setDescription('Nom de la playlist')
             .setAutocomplete(true)
             .setRequired(true)
         )
@@ -97,16 +140,23 @@ const commands = [
     .addSubcommand(sub =>
       sub
         .setName('liste')
-        .setDescription('Afficher les stations enregistrées')
+        .setDescription('Afficher les playlists (ou le contenu de l’une d’elles)')
+        .addStringOption(option =>
+          option
+            .setName('nom')
+            .setDescription('Playlist à détailler')
+            .setAutocomplete(true)
+            .setRequired(false)
+        )
     )
     .addSubcommand(sub =>
       sub
         .setName('supprimer')
-        .setDescription('Supprimer une station')
+        .setDescription('Supprimer une playlist')
         .addStringOption(option =>
           option
             .setName('nom')
-            .setDescription('Nom de la station')
+            .setDescription('Nom de la playlist')
             .setAutocomplete(true)
             .setRequired(true)
         )
@@ -146,7 +196,7 @@ async function main() {
   console.log('/play url');
   console.log('/play spotify');
   console.log('/play radio');
-  console.log('/station creer /jouer /liste /supprimer');
+  console.log('/station creer /ajouter /retirer /jouer /liste /supprimer');
   console.log('/pause /resume /stop');
   console.log('/skip /queue /list');
   console.log('================================');

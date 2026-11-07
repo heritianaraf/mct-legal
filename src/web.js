@@ -127,6 +127,26 @@ function startWeb(bot) {
         return send(res, 200, { message: bot.removeStation(guildId, name) });
       }
 
+      if (url.pathname === '/api/station/add' && req.method === 'POST') {
+        const { guildId, name, source } = await readJson(req);
+        return send(res, 200, { message: await bot.addStationLink(guildId, name, source) });
+      }
+
+      if (url.pathname === '/api/station/remove-item' && req.method === 'POST') {
+        const { guildId, name, index } = await readJson(req);
+        return send(res, 200, { message: bot.removeStationItem(guildId, name, index) });
+      }
+
+      if (url.pathname === '/api/station/upload' && req.method === 'PUT') {
+        const message = await bot.addStationFile(
+          url.searchParams.get('guildId'),
+          url.searchParams.get('name'),
+          url.searchParams.get('file') || 'musique.mp3',
+          req
+        );
+        return send(res, 200, { message });
+      }
+
       if (url.pathname === '/api/upload' && req.method === 'PUT') {
         const message = await bot.upload(
           url.searchParams.get('guildId'),
