@@ -133,8 +133,8 @@ function startWeb(bot) {
       }
 
       if (url.pathname === '/api/queue/save' && req.method === 'POST') {
-        const { guildId, items, playlists } = await readJson(req);
-        return send(res, 200, { message: await bot.saveQueueToStations(guildId, items, playlists) });
+        const { guildId, items, playlists, passwords } = await readJson(req);
+        return send(res, 200, { message: await bot.saveQueueToStations(guildId, items, playlists, passwords) });
       }
 
       if (url.pathname === '/api/queue' && req.method === 'POST') {

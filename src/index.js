@@ -960,13 +960,26 @@ const botApi = {
   },
 
   // Enregistre des morceaux de la file dans une ou plusieurs playlists.
-  async saveQueueToStations(guildId, items, stationNames) {
+  async saveQueueToStations(guildId, items, stationNames, passwords) {
     assertGuild(guildId);
 
     const state = queues.get(String(guildId));
     if (!state) throw new Error('Aucune lecture sur ce serveur.');
     if (!Array.isArray(items) || !items.length) throw new Error('Sélectionne au moins un morceau.');
     if (!Array.isArray(stationNames) || !stationNames.length) throw new Error('Choisis au moins une playlist.');
+
+    // Mot de passe obligatoire pour chaque playlist choisie (vérifié avant tout ajout)
+    for (const stationName of stationNames.slice(0, MAX_STATIONS).map(String)) {
+      const station = findStation(String(guildId), stationName);
+      if (!station) throw new Error(`Playlist « ${stationName} » introuvable.`);
+
+      const given = passwords && typeof passwords === 'object' ? passwords[stationName] : '';
+      try {
+        assertStationPassword(station, given, 'web');
+      } catch (error) {
+        throw new Error(`${station.name} : ${error.message}`);
+      }
+    }
 
     const tracks = items.slice(0, MAX_STATION_ITEMS).map(({ index, name }) => {
       const track = state.items[Number(index)];
