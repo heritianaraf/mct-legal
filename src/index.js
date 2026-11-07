@@ -5,7 +5,8 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const ffmpegPath = require('ffmpeg-static');
-const { randomUUID } = require('node:crypto');
+const crypto = require('node:crypto');
+const { randomUUID } = crypto;
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 
@@ -737,13 +738,15 @@ const botApi = {
     });
   },
 
-  async addStation(guildId, source, name) {
+  async addStation(guildId, source, name, password) {
+    assertPlaylistPassword(password, 'web');
     assertGuild(guildId);
     const station = await createStation(String(guildId), source, name);
     return `✅ Playlist ${station.name} créée (${station.info}).`;
   },
 
-  removeStation(guildId, name) {
+  removeStation(guildId, name, password) {
+    assertPlaylistPassword(password, 'web');
     assertGuild(guildId);
     const station = deleteStation(String(guildId), name);
     if (!station) throw new Error('Playlist introuvable.');
@@ -770,6 +773,31 @@ const botApi = {
     assertGuild(guildId);
     const removed = removeStationItem(String(guildId), name, index);
     return `🗑️ ${removed.label} retiré de la playlist.`;
+  },
+
+  // Enregistre des morceaux de la file dans une ou plusieurs playlists.
+  async saveQueueToStations(guildId, items, stationNames) {
+    assertGuild(guildId);
+
+    const state = queues.get(String(guildId));
+    if (!state) throw new Error('Aucune lecture sur ce serveur.');
+    if (!Array.isArray(items) || !items.length) throw new Error('Sélectionne au moins un morceau.');
+    if (!Array.isArray(stationNames) || !stationNames.length) throw new Error('Choisis au moins une playlist.');
+
+    const tracks = items.slice(0, MAX_STATION_ITEMS).map(({ index, name }) => {
+      const track = state.items[Number(index)];
+      if (!track || track.name !== name) throw new Error('La file a changé, réessaie.');
+      return track;
+    });
+
+    const { done, notes } = await saveTracksToStations(
+      String(guildId),
+      tracks,
+      stationNames.slice(0, MAX_STATIONS).map(String)
+    );
+
+    if (!done) throw new Error(notes.slice(0, 5).join('\n') || 'Rien n’a été ajouté.');
+    return [`✅ ${done} ajout(s) dans les playlists.`, ...notes.slice(0, 5)].join('\n');
   },
 
   // Réorganise la file : 'up' remonte d'un cran, 'play' lance le morceau tout de suite.
@@ -1058,6 +1086,38 @@ const ITEM_ICONS = { drive: '☁️', file: '🎵' };
 
 fs.mkdirSync(PLAYLIST_DIR, { recursive: true });
 
+// ======================================
+// MOT DE PASSE (créer / supprimer une playlist)
+// ======================================
+
+const PLAYLIST_PASSWORD = (process.env.PLAYLIST_PASSWORD || '').trim();
+const passwordFails = new Map();
+
+function assertPlaylistPassword(given, key) {
+  if (!PLAYLIST_PASSWORD) {
+    throw new Error('Définis PLAYLIST_PASSWORD dans .env pour créer ou supprimer une playlist.');
+  }
+
+  const entry = passwordFails.get(key);
+  const active = Boolean(entry && entry.reset > Date.now());
+
+  if (active && entry.count >= 5) {
+    throw new Error('Trop d’essais, réessaie dans quelques minutes.');
+  }
+
+  const hash = value => crypto.createHash('sha256').update(String(value ?? '')).digest();
+
+  if (!crypto.timingSafeEqual(hash(given), hash(PLAYLIST_PASSWORD))) {
+    passwordFails.set(key, {
+      count: (active ? entry.count : 0) + 1,
+      reset: active ? entry.reset : Date.now() + 10 * 60 * 1000
+    });
+    throw new Error('Mot de passe incorrect.');
+  }
+
+  passwordFails.delete(key);
+}
+
 const sameName = (a, b) => String(a).toLowerCase().trim() === String(b).toLowerCase().trim();
 const cleanName = value => String(value || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 50);
 
@@ -1257,6 +1317,55 @@ function removeStationItem(guildId, name, index) {
   return removed;
 }
 
+// Ajoute des morceaux de la file à une ou plusieurs playlists.
+// - morceau Google Drive : on garde seulement le lien (rien à copier)
+// - MP3 envoyé : le fichier est copié dans le dossier des playlists (une copie par playlist)
+async function saveTracksToStations(guildId, tracks, stationNames) {
+  let done = 0;
+  const notes = [];
+
+  for (const stationName of stationNames) {
+    const station = findStation(guildId, stationName);
+
+    if (!station) {
+      notes.push(`⚠️ Playlist « ${stationName} » introuvable.`);
+      continue;
+    }
+
+    for (const track of tracks) {
+      const label = String(track.name).slice(0, 70);
+
+      try {
+        if (track.driveId) {
+          addStationItem(guildId, station.name, {
+            type: 'drive',
+            value: `https://drive.google.com/file/d/${track.driveId}/view`,
+            label
+          });
+        } else if (track.file && fs.existsSync(track.file)) {
+          const stored = `${Date.now()}-${randomUUID()}-${label.replace(/[^a-zA-Z0-9 _-]/g, '_') || 'musique'}.mp3`;
+          await fsp.copyFile(track.file, path.join(PLAYLIST_DIR, stored));
+
+          try {
+            addStationItem(guildId, station.name, { type: 'file', value: stored, label });
+          } catch (error) {
+            await deleteStoredFile(stored);
+            throw error;
+          }
+        } else {
+          throw new Error('fichier indisponible');
+        }
+
+        done++;
+      } catch (error) {
+        notes.push(`⚠️ ${label} → ${station.name} : ${error.message}`);
+      }
+    }
+  }
+
+  return { done, notes };
+}
+
 async function enqueueStation(state, station) {
   if (!station.items.length) {
     throw new Error('Cette playlist est vide. Ajoute-lui des éléments.');
@@ -1306,6 +1415,8 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isModalSubmit() && interaction.customId === 'station-create') {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+      assertPlaylistPassword(interaction.fields.getTextInputValue('password'), interaction.user.id);
+
       const { name, info } = await createStation(
         interaction.guildId,
         interaction.fields.getTextInputValue('source'),
@@ -1315,6 +1426,18 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.editReply(
         `✅ Playlist **${name}** créée (${info}).\nAjoute-lui d’autres éléments avec \`/station ajouter\`, lance-la avec \`/station jouer\`.`
       );
+    }
+
+    // Validation du formulaire de suppression
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('station-delete:')) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+      assertPlaylistPassword(interaction.fields.getTextInputValue('password'), interaction.user.id);
+
+      const station = deleteStation(interaction.guildId, interaction.customId.slice('station-delete:'.length));
+      if (!station) throw new Error('Playlist introuvable.');
+
+      return interaction.editReply(`🗑️ Playlist **${station.name}** supprimée.`);
     }
 
     if (!interaction.isChatInputCommand() || interaction.commandName !== 'station') return;
@@ -1348,6 +1471,15 @@ client.on(Events.InteractionCreate, async interaction => {
               .setPlaceholder('Nom de la station')
               .setRequired(false)
               .setMaxLength(50)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('password')
+              .setLabel('Mot de passe')
+              .setStyle(TextInputStyle.Short)
+              .setPlaceholder('Mot de passe pour créer une playlist')
+              .setRequired(true)
+              .setMaxLength(100)
           )
         );
 
@@ -1397,26 +1529,18 @@ client.on(Events.InteractionCreate, async interaction => {
         throw new Error('Choisis soit un fichier MP3, soit un lien (pas les deux).');
       }
 
-      let station = findStation(guildId, typed);
-      const created = !station;
-
-      if (created) {
-        await createStation(guildId, '', typed);
-        station = findStation(guildId, typed);
+      const station = findStation(guildId, typed);
+      if (!station) {
+        throw new Error('Playlist introuvable. Crée-la d’abord avec /station creer (mot de passe requis).');
       }
 
-      try {
-        const result = attachment
-          ? await addFileToStation(guildId, station.name, await downloadDiscordMp3(attachment), attachment.name)
-          : await addLinkToStation(guildId, station.name, link);
+      const result = attachment
+        ? await addFileToStation(guildId, station.name, await downloadDiscordMp3(attachment), attachment.name)
+        : await addLinkToStation(guildId, station.name, link);
 
-        return interaction.editReply(
-          `✅ **${result.label}** ajouté à **${station.name}**${created ? ' (nouvelle playlist)' : ''} : ${result.info}.`
-        );
-      } catch (error) {
-        if (created) deleteStation(guildId, station.name);
-        throw error;
-      }
+      return interaction.editReply(
+        `✅ **${result.label}** ajouté à **${station.name}** : ${result.info}.`
+      );
     }
 
     if (sub === 'retirer') {
@@ -1454,8 +1578,21 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ content: '❌ Playlist introuvable.', flags: MessageFlags.Ephemeral });
       }
 
-      deleteStation(guildId, station.name);
-      return interaction.reply({ content: `🗑️ Playlist **${station.name}** supprimée.`, flags: MessageFlags.Ephemeral });
+      const modal = new ModalBuilder()
+        .setCustomId(`station-delete:${station.name}`)
+        .setTitle('Supprimer la playlist')
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('password')
+              .setLabel(`Mot de passe pour supprimer « ${station.name.slice(0, 30)} »`)
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+              .setMaxLength(100)
+          )
+        );
+
+      return interaction.showModal(modal);
     }
 
     if (sub === 'jouer') {

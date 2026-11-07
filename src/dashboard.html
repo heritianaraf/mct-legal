@@ -287,6 +287,7 @@ input[type="file"] {
     <div class="card">
       <h2>Playlists</h2>
       <div class="stack">
+        <input id="stpw" type="password" placeholder="Mot de passe (pour créer ou supprimer une playlist)" autocomplete="off">
         <div class="row" id="stlist">
           <select id="station" aria-label="Playlist"></select>
           <button id="stplay" class="main">Lancer</button>
@@ -315,6 +316,15 @@ input[type="file"] {
       <h2>File d’attente</h2>
       <ol id="queue"></ol>
       <p id="qempty" class="empty">La file est vide.</p>
+      <div id="qsave" class="stack" hidden>
+        <h2 class="sep">Ajouter la sélection à des playlists</h2>
+        <div id="qplaylists" class="stack"></div>
+        <p id="qnone" class="empty" hidden>Crée d’abord une playlist.</p>
+        <div class="row">
+          <button id="qall" class="ghost">Tout sélectionner</button>
+          <button id="qsavebtn" class="main">Ajouter la sélection</button>
+        </div>
+      </div>
     </div>
   </div>
 </main>
@@ -322,6 +332,8 @@ input[type="file"] {
 <script>
 const $ = id => document.getElementById(id);
 let data = { guilds: [] };
+const selected = new Set(); // morceaux cochés dans la file : "index|nom"
+const picked = new Set();   // playlists cochées
 
 async function api(url, opts = {}) {
   const res = await fetch(url, opts);
@@ -406,12 +418,22 @@ function render() {
   $('loop').textContent = g?.loop ? '🔁 Boucle activée' : '🔁 Boucle désactivée';
 
   const queue = g?.queue || [];
+  const keys = new Set(queue.map((name, index) => index + '|' + name));
+  for (const key of [...selected]) if (!keys.has(key)) selected.delete(key);
+
   const qsig = JSON.stringify([g?.id, queue]);
   if ($('queue').dataset.sig !== qsig) {
     $('queue').dataset.sig = qsig;
     $('queue').replaceChildren(...queue.map((name, index) => {
       const li = document.createElement('li');
-      li.append(name);
+
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = selected.has(index + '|' + name);
+      box.title = 'Sélectionner';
+      box.style.marginRight = '8px';
+      box.onchange = () => box.checked ? selected.add(index + '|' + name) : selected.delete(index + '|' + name);
+      li.append(box, name);
 
       const play = document.createElement('button');
       play.className = 'ghost rm';
@@ -431,6 +453,28 @@ function render() {
       return li;
     }));
   }
+
+  // choix des playlists de destination
+  const names = new Set(stations.map(s => s.name));
+  for (const name of [...picked]) if (!names.has(name)) picked.delete(name);
+
+  const psig = JSON.stringify(stations.map(s => s.name));
+  if ($('qplaylists').dataset.sig !== psig) {
+    $('qplaylists').dataset.sig = psig;
+    $('qplaylists').replaceChildren(...stations.map(s => {
+      const label = document.createElement('label');
+      label.className = 'chk';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = picked.has(s.name);
+      box.onchange = () => box.checked ? picked.add(s.name) : picked.delete(s.name);
+      label.append(box, s.name);
+      return label;
+    }));
+  }
+
+  $('qsave').hidden = queue.length === 0;
+  $('qnone').hidden = stations.length > 0;
   $('qempty').hidden = queue.length > 0;
 }
 
@@ -499,7 +543,7 @@ $('stplay').onclick = () => act(async () =>
 $('stdel').onclick = () => {
   const name = $('station').value;
   if (!name || !confirm('Supprimer la playlist « ' + name + ' » ?')) return;
-  act(async () => (await api('/api/station/delete', post({ guildId: $('guild').value, name }))).message);
+  act(async () => (await api('/api/station/delete', post({ guildId: $('guild').value, name, password: $('stpw').value }))).message);
 };
 
 $('stlinkbtn').onclick = () => act(async () => {
@@ -521,10 +565,31 @@ $('stnew').onclick = () => act(async () => {
   const result = await api('/api/station', post({
     guildId: $('guild').value,
     source: $('stsrc').value,
-    name: $('stname').value
+    name: $('stname').value,
+    password: $('stpw').value
   }));
   $('stsrc').value = '';
   $('stname').value = '';
+  return result.message;
+});
+
+$('qall').onclick = () => {
+  const g = data.guilds.find(x => x.id === $('guild').value);
+  (g?.queue || []).forEach((name, index) => selected.add(index + '|' + name));
+  $('queue').dataset.sig = '';
+  render();
+};
+
+$('qsavebtn').onclick = () => act(async () => {
+  const items = [...selected].map(key => {
+    const cut = key.indexOf('|');
+    return { index: Number(key.slice(0, cut)), name: key.slice(cut + 1) };
+  });
+  const result = await api('/api/queue/save', post({ guildId: $('guild').value, items, playlists: [...picked] }));
+  selected.clear();
+  picked.clear();
+  $('queue').dataset.sig = '';
+  $('qplaylists').dataset.sig = '';
   return result.message;
 });
 

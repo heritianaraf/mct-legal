@@ -117,19 +117,24 @@ function startWeb(bot) {
         return send(res, 200, { ok: true });
       }
 
+      if (url.pathname === '/api/queue/save' && req.method === 'POST') {
+        const { guildId, items, playlists } = await readJson(req);
+        return send(res, 200, { message: await bot.saveQueueToStations(guildId, items, playlists) });
+      }
+
       if (url.pathname === '/api/queue' && req.method === 'POST') {
         const { guildId, index, action, name } = await readJson(req);
         return send(res, 200, { message: bot.queueAction(guildId, index, action, name) });
       }
 
       if (url.pathname === '/api/station' && req.method === 'POST') {
-        const { guildId, source, name } = await readJson(req);
-        return send(res, 200, { message: await bot.addStation(guildId, source, name) });
+        const { guildId, source, name, password } = await readJson(req);
+        return send(res, 200, { message: await bot.addStation(guildId, source, name, password) });
       }
 
       if (url.pathname === '/api/station/delete' && req.method === 'POST') {
-        const { guildId, name } = await readJson(req);
-        return send(res, 200, { message: bot.removeStation(guildId, name) });
+        const { guildId, name, password } = await readJson(req);
+        return send(res, 200, { message: bot.removeStation(guildId, name, password) });
       }
 
       if (url.pathname === '/api/station/add' && req.method === 'POST') {

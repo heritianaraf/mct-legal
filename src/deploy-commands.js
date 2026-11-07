@@ -57,7 +57,7 @@ const commands = [
     .addSubcommand(sub =>
       sub
         .setName('creer')
-        .setDescription('Créer une playlist')
+        .setDescription('Créer une playlist (mot de passe requis)')
     )
     .addSubcommand(sub =>
       sub
@@ -66,7 +66,7 @@ const commands = [
         .addStringOption(option =>
           option
             .setName('nom')
-            .setDescription('Playlist existante (ou un nouveau nom pour la créer)')
+            .setDescription('Playlist existante')
             .setAutocomplete(true)
             .setRequired(true)
         )
@@ -146,7 +146,7 @@ const commands = [
     .addSubcommand(sub =>
       sub
         .setName('supprimer')
-        .setDescription('Supprimer une playlist')
+        .setDescription('Supprimer une playlist (mot de passe requis)')
         .addStringOption(option =>
           option
             .setName('nom')
