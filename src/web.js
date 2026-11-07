@@ -103,7 +103,7 @@ function startWeb(bot) {
       if (!isAuthed(req)) throw fail('Non connecté.', 401);
 
       if (url.pathname === '/api/state' && req.method === 'GET') {
-        return send(res, 200, { guilds: bot.getState(), passwordSet: bot.passwordSet() });
+        return send(res, 200, { guilds: bot.getState() });
       }
 
       if (url.pathname === '/api/play' && req.method === 'POST') {
@@ -120,11 +120,6 @@ function startWeb(bot) {
         const { guildId, action } = await readJson(req);
         await bot.control(guildId, action);
         return send(res, 200, { ok: true });
-      }
-
-      if (url.pathname === '/api/playlist-password' && req.method === 'POST') {
-        const { oldPassword, newPassword } = await readJson(req);
-        return send(res, 200, { message: bot.setPlaylistPassword(newPassword, oldPassword) });
       }
 
       if (url.pathname === '/api/queue/save' && req.method === 'POST') {

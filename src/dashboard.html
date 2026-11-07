@@ -314,32 +314,13 @@ summary {
     <div class="card">
       <h2>Playlists</h2>
       <div class="stack">
-        <div id="pwsetup" class="stack" hidden>
-          <p class="sub">Aucun mot de passe : crée-le pour pouvoir créer ou supprimer des playlists.</p>
-          <div class="row">
-            <input id="pwnew" type="password" placeholder="Nouveau mot de passe (4 caractères min.)" autocomplete="new-password">
-            <input id="pwnew2" type="password" placeholder="Confirmer" autocomplete="new-password">
-            <button id="pwsave" class="main">Créer le mot de passe</button>
-          </div>
-        </div>
-        <div id="pwuse" class="stack" hidden>
-          <input id="stpw" type="password" placeholder="Mot de passe (pour créer ou supprimer une playlist)" autocomplete="off">
-          <details>
-            <summary>Changer le mot de passe</summary>
-            <div class="row sep">
-              <input id="pwold" type="password" placeholder="Ancien mot de passe" autocomplete="off">
-              <input id="pwchg" type="password" placeholder="Nouveau" autocomplete="new-password">
-              <input id="pwchg2" type="password" placeholder="Confirmer" autocomplete="new-password">
-              <button id="pwchgbtn" class="ghost">Changer</button>
-            </div>
-          </details>
-        </div>
         <div class="row" id="stlist">
           <select id="station" aria-label="Playlist"></select>
           <button id="stplay" class="main">Lancer</button>
           <button id="stdel" class="ghost">Supprimer</button>
         </div>
         <label class="chk" id="stloopl"><input type="checkbox" id="stloop" checked> Relancer la playlist en boucle</label>
+        <input id="stpw" type="password" placeholder="Mot de passe de la playlist (pour la supprimer)" autocomplete="off">
         <ol id="stitems"></ol>
         <p id="stempty" class="empty">Aucune playlist pour ce serveur.</p>
         <div id="stadd" class="stack">
@@ -353,6 +334,10 @@ summary {
         <div class="row">
           <input id="stname" type="text" placeholder="Nom de la playlist">
           <input id="stsrc" type="text" placeholder="Premier lien (facultatif)">
+        </div>
+        <div class="row">
+          <input id="stnewpw" type="password" placeholder="Mot de passe de la playlist (4 caractères min.)" autocomplete="new-password">
+          <input id="stnewpw2" type="password" placeholder="Confirmer le mot de passe" autocomplete="new-password">
           <button id="stnew" class="main">Créer</button>
         </div>
       </div>
@@ -427,9 +412,6 @@ function queueAction(index, name, action) {
 }
 
 function render() {
-  $('pwsetup').hidden = Boolean(data.passwordSet);
-  $('pwuse').hidden = !data.passwordSet;
-
   fill($('guild'), data.guilds.map(g => [g.id, g.name]));
   const g = data.guilds.find(x => x.id === $('guild').value);
 
@@ -438,13 +420,14 @@ function render() {
 
   const stations = g?.stations || [];
   const icons = { drive: '☁️', file: '🎵' };
-  fill($('station'), stations.map(s => [s.name, s.name + ' (' + s.items.length + ')']));
+  fill($('station'), stations.map(s => [s.name, (s.locked ? '🔒 ' : '') + s.name + ' (' + s.items.length + ')']));
 
   const st = stations.find(s => s.name === $('station').value);
   $('stlist').hidden = !stations.length;
   $('stempty').hidden = stations.length > 0;
   $('stadd').hidden = !st;
   $('stloopl').hidden = !stations.length;
+  $('stpw').hidden = !stations.length;
 
   const sig = JSON.stringify(st || null);
   if ($('stitems').dataset.sig !== sig) {
@@ -596,7 +579,11 @@ $('stplay').onclick = () => act(async () =>
 $('stdel').onclick = () => {
   const name = $('station').value;
   if (!name || !confirm('Supprimer la playlist « ' + name + ' » ?')) return;
-  act(async () => (await api('/api/station/delete', post({ guildId: $('guild').value, name, password: $('stpw').value }))).message);
+  act(async () => {
+    const result = await api('/api/station/delete', post({ guildId: $('guild').value, name, password: $('stpw').value }));
+    $('stpw').value = '';
+    return result.message;
+  });
 };
 
 $('stlinkbtn').onclick = () => act(async () => {
@@ -615,34 +602,22 @@ $('stfile').onchange = () => act(async () => {
 });
 
 $('stnew').onclick = () => act(async () => {
+  if ($('stnewpw').value !== $('stnewpw2').value) {
+    throw new Error('Les deux mots de passe ne correspondent pas.');
+  }
+
   const result = await api('/api/station', post({
     guildId: $('guild').value,
     source: $('stsrc').value,
     name: $('stname').value,
-    password: $('stpw').value
+    password: $('stnewpw').value
   }));
   $('stsrc').value = '';
   $('stname').value = '';
+  $('stnewpw').value = '';
+  $('stnewpw2').value = '';
   return result.message;
 });
-
-function savePassword(oldId, newId, confirmId) {
-  act(async () => {
-    const next = $(newId).value;
-    if (next !== $(confirmId).value) throw new Error('Les deux mots de passe ne correspondent pas.');
-
-    const result = await api('/api/playlist-password', post({
-      oldPassword: oldId ? $(oldId).value : '',
-      newPassword: next
-    }));
-
-    [oldId, newId, confirmId].filter(Boolean).forEach(id => { $(id).value = ''; });
-    return result.message;
-  });
-}
-
-$('pwsave').onclick = () => savePassword(null, 'pwnew', 'pwnew2');
-$('pwchgbtn').onclick = () => savePassword('pwold', 'pwchg', 'pwchg2');
 
 $('qall').onclick = () => {
   const g = data.guilds.find(x => x.id === $('guild').value);

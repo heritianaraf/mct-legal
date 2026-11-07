@@ -708,17 +708,9 @@ function assertGuild(guildId) {
 }
 
 const botApi = {
-  passwordSet: () => hasPlaylistPassword(),
-
   volume(guildId, level) {
     assertGuild(guildId);
     return `🔊 Volume : ${setVolume(guildId, level)}%`;
-  },
-
-  setPlaylistPassword(newPassword, oldPassword) {
-    const existed = hasPlaylistPassword();
-    setPlaylistPassword(newPassword, oldPassword, 'web');
-    return existed ? '🔒 Mot de passe modifié.' : '🔒 Mot de passe créé.';
   },
 
   getState() {
@@ -741,6 +733,7 @@ const botApi = {
         loop: Boolean(state?.loop),
         stations: guildStations(guild.id).map(s => ({
           name: s.name,
+          locked: Boolean(s.password),
           items: s.items.map(item => ({ type: item.type, label: item.label }))
         }))
       };
@@ -801,17 +794,18 @@ const botApi = {
   },
 
   async addStation(guildId, source, name, password) {
-    assertPlaylistPassword(password, 'web');
     assertGuild(guildId);
-    const station = await createStation(String(guildId), source, name);
+    const station = await createStation(String(guildId), source, name, password);
     return `✅ Playlist ${station.name} créée (${station.info}).`;
   },
 
   removeStation(guildId, name, password) {
-    assertPlaylistPassword(password, 'web');
     assertGuild(guildId);
-    const station = deleteStation(String(guildId), name);
+    const station = findStation(String(guildId), name);
     if (!station) throw new Error('Playlist introuvable.');
+
+    assertStationPassword(station, password, 'web');
+    deleteStation(String(guildId), station.name);
     return `🗑️ Playlist ${station.name} supprimée.`;
   },
 
@@ -1163,30 +1157,29 @@ const ITEM_ICONS = { drive: '☁️', file: '🎵' };
 fs.mkdirSync(PLAYLIST_DIR, { recursive: true });
 
 // ======================================
-// MOT DE PASSE (créer / supprimer une playlist)
+// MOT DE PASSE DES PLAYLISTS (un par playlist, créé avec elle)
 // ======================================
 
-const PASSWORD_FILE = path.join(MUSIC_DIR, '..', 'playlist-password.json');
 const passwordFails = new Map();
 
 const hashPassword = (password, salt) => crypto.scryptSync(String(password), salt, 64);
 
-function loadPasswordRecord() {
-  try {
-    const { salt, hash } = JSON.parse(fs.readFileSync(PASSWORD_FILE, 'utf8'));
-    return { salt: Buffer.from(salt, 'hex'), hash: Buffer.from(hash, 'hex') };
-  } catch {
-    return null;
+// Transforme un mot de passe en empreinte (jamais stocké en clair).
+function makePasswordRecord(password) {
+  const value = String(password ?? '');
+
+  if (value.length < 4 || value.length > 100) {
+    throw new Error('Le mot de passe de la playlist doit faire entre 4 et 100 caractères.');
   }
+
+  const salt = crypto.randomBytes(16);
+  return { salt: salt.toString('hex'), hash: hashPassword(value, salt).toString('hex') };
 }
 
-const hasPlaylistPassword = () => Boolean(loadPasswordRecord());
-
-function assertPlaylistPassword(given, key) {
-  const record = loadPasswordRecord();
-  if (!record) {
-    throw new Error('Aucun mot de passe défini : crée-le d’abord dans le dashboard (carte Playlists).');
-  }
+// Vérifie le mot de passe d'une playlist (une ancienne playlist, sans mot de passe, n'en demande pas).
+function assertStationPassword(station, given, key) {
+  const record = station?.password;
+  if (!record) return;
 
   const entry = passwordFails.get(key);
   const active = Boolean(entry && entry.reset > Date.now());
@@ -1195,7 +1188,10 @@ function assertPlaylistPassword(given, key) {
     throw new Error('Trop d’essais, réessaie dans quelques minutes.');
   }
 
-  if (!crypto.timingSafeEqual(hashPassword(given ?? '', record.salt), record.hash)) {
+  const expected = Buffer.from(record.hash, 'hex');
+  const actual = hashPassword(given ?? '', Buffer.from(record.salt, 'hex'));
+
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
     passwordFails.set(key, {
       count: (active ? entry.count : 0) + 1,
       reset: active ? entry.reset : Date.now() + 10 * 60 * 1000
@@ -1204,27 +1200,6 @@ function assertPlaylistPassword(given, key) {
   }
 
   passwordFails.delete(key);
-}
-
-// Crée le mot de passe (première fois) ou le change (ancien mot de passe requis).
-function setPlaylistPassword(newPassword, oldPassword, key) {
-  const value = String(newPassword ?? '');
-
-  if (value.length < 4 || value.length > 100) {
-    throw new Error('Le mot de passe doit faire entre 4 et 100 caractères.');
-  }
-
-  if (hasPlaylistPassword()) assertPlaylistPassword(oldPassword, key);
-
-  const salt = crypto.randomBytes(16);
-  const tmp = `${PASSWORD_FILE}.tmp`;
-
-  fs.writeFileSync(
-    tmp,
-    JSON.stringify({ salt: salt.toString('hex'), hash: hashPassword(value, salt).toString('hex') }),
-    { mode: 0o600 }
-  );
-  fs.renameSync(tmp, PASSWORD_FILE);
 }
 
 const sameName = (a, b) => String(a).toLowerCase().trim() === String(b).toLowerCase().trim();
@@ -1307,9 +1282,10 @@ async function buildItem(source) {
 }
 
 // Crée une playlist ; sans lien, elle est créée vide (un nom est alors obligatoire).
-async function createStation(guildId, source, customName) {
+async function createStation(guildId, source, customName, rawPassword) {
   const link = String(source || '').trim();
   const wanted = cleanName(customName);
+  const password = makePasswordRecord(rawPassword);
 
   if (!link && !wanted) throw new Error('Donne un nom ou un lien pour créer la playlist.');
   if (guildStations(guildId).length >= MAX_STATIONS) {
@@ -1327,7 +1303,7 @@ async function createStation(guildId, source, customName) {
   }
 
   const { info, ...item } = built || {};
-  all[guildId] = [...list, { name, items: built ? [item] : [] }];
+  all[guildId] = [...list, { name, items: built ? [item] : [], password }];
   saveStations(all);
 
   return { name, info: built ? info : 'playlist vide' };
@@ -1524,12 +1500,16 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isModalSubmit() && interaction.customId === 'station-create') {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-      assertPlaylistPassword(interaction.fields.getTextInputValue('password'), interaction.user.id);
+      const password = interaction.fields.getTextInputValue('password');
+      if (password !== interaction.fields.getTextInputValue('password2')) {
+        throw new Error('Les deux mots de passe ne correspondent pas.');
+      }
 
       const { name, info } = await createStation(
         interaction.guildId,
         interaction.fields.getTextInputValue('source'),
-        interaction.fields.getTextInputValue('name')
+        interaction.fields.getTextInputValue('name'),
+        password
       );
 
       return interaction.editReply(
@@ -1541,10 +1521,11 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isModalSubmit() && interaction.customId.startsWith('station-delete:')) {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-      assertPlaylistPassword(interaction.fields.getTextInputValue('password'), interaction.user.id);
-
-      const station = deleteStation(interaction.guildId, interaction.customId.slice('station-delete:'.length));
+      const station = findStation(interaction.guildId, interaction.customId.slice('station-delete:'.length));
       if (!station) throw new Error('Playlist introuvable.');
+
+      assertStationPassword(station, interaction.fields.getTextInputValue('password'), interaction.user.id);
+      deleteStation(interaction.guildId, station.name);
 
       return interaction.editReply(`🗑️ Playlist **${station.name}** supprimée.`);
     }
@@ -1559,13 +1540,6 @@ client.on(Events.InteractionCreate, async interaction => {
     const sub = interaction.options.getSubcommand();
 
     if (sub === 'creer') {
-      if (!hasPlaylistPassword()) {
-        return interaction.reply({
-          content: '🔒 Aucun mot de passe défini. Crée-le d’abord dans le dashboard (carte Playlists).',
-          flags: MessageFlags.Ephemeral
-        });
-      }
-
       const modal = new ModalBuilder()
         .setCustomId('station-create')
         .setTitle('Créer une nouvelle station')
@@ -1591,9 +1565,17 @@ client.on(Events.InteractionCreate, async interaction => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('password')
-              .setLabel('Mot de passe')
+              .setLabel('Mot de passe de la playlist')
               .setStyle(TextInputStyle.Short)
-              .setPlaceholder('Mot de passe pour créer une playlist')
+              .setPlaceholder('Il servira à la supprimer (4 caractères min.)')
+              .setRequired(true)
+              .setMaxLength(100)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('password2')
+              .setLabel('Confirmer le mot de passe')
+              .setStyle(TextInputStyle.Short)
               .setRequired(true)
               .setMaxLength(100)
           )
@@ -1694,9 +1676,11 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ content: '❌ Playlist introuvable.', flags: MessageFlags.Ephemeral });
       }
 
-      if (!hasPlaylistPassword()) {
+      // Ancienne playlist créée sans mot de passe : suppression directe.
+      if (!station.password) {
+        deleteStation(guildId, station.name);
         return interaction.reply({
-          content: '🔒 Aucun mot de passe défini. Crée-le d’abord dans le dashboard (carte Playlists).',
+          content: `🗑️ Playlist **${station.name}** supprimée (elle n’avait pas de mot de passe).`,
           flags: MessageFlags.Ephemeral
         });
       }

@@ -70,7 +70,7 @@ const commands = [
     .addSubcommand(sub =>
       sub
         .setName('creer')
-        .setDescription('Créer une playlist (mot de passe requis)')
+        .setDescription('Créer une playlist avec son mot de passe')
     )
     .addSubcommand(sub =>
       sub
@@ -159,7 +159,7 @@ const commands = [
     .addSubcommand(sub =>
       sub
         .setName('supprimer')
-        .setDescription('Supprimer une playlist (mot de passe requis)')
+        .setDescription('Supprimer une playlist (mot de passe de la playlist)')
         .addStringOption(option =>
           option
             .setName('nom')
