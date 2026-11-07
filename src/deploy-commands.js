@@ -18,34 +18,12 @@ const commands = [
         .setDescription('MP3 depuis votre ordinateur')
         .setRequired(false)
     )
-    /*
-    .addStringOption(option =>
-      option
-        .setName('nom')
-        .setDescription('Nom du MP3 dans le dossier music')
-        .setRequired(false)
-    )
-    */
     .addStringOption(option =>
       option
         .setName('url')
         .setDescription('Lien Google Drive vers un MP3 ou un dossier de MP3')
         .setRequired(false)
     ),
-    /*
-    .addStringOption(option =>
-      option
-        .setName('spotify')
-        .setDescription('Lien Spotify (morceau, album ou playlist) retrouvé dans tes MP3')
-        .setRequired(false)
-    )
-        
-    .addStringOption(option =>
-      option
-        .setName('radio')
-        .setDescription('Adresse directe d’une radio / flux audio (Icecast, Shoutcast, HLS)')
-        .setRequired(false)
-    )*/
 
   // PAUSE
   new SlashCommandBuilder()
@@ -72,11 +50,6 @@ const commands = [
     .setName('queue')
     .setDescription('Afficher la file d’attente'),
 
-  // LIST
-  new SlashCommandBuilder()
-    .setName('list')
-    .setDescription('Afficher les MP3 disponibles'),
-
   // STATION (playlists)
   new SlashCommandBuilder()
     .setName('station')
@@ -84,7 +57,7 @@ const commands = [
     .addSubcommand(sub =>
       sub
         .setName('creer')
-        .setDescription('Créer une playlist Google Drive)')
+        .setDescription('Créer une playlist')
     )
     .addSubcommand(sub =>
       sub
@@ -106,7 +79,7 @@ const commands = [
         .addStringOption(option =>
           option
             .setName('lien')
-            .setDescription('Lien Spotify, Google Drive ou radio')
+            .setDescription('Lien Google Drive (fichier ou dossier)')
             .setRequired(false)
         )
     )
@@ -213,13 +186,10 @@ async function main() {
   console.log('================================');
   console.log('MCT MUSIC : commandes enregistrées');
   console.log('/play fichier');
-  console.log('/play nom');
   console.log('/play url');
-  console.log('/play spotify');
-  console.log('/play radio');
   console.log('/station creer /ajouter /retirer /jouer /boucle /liste /supprimer');
   console.log('/pause /resume /stop');
-  console.log('/skip /queue /list');
+  console.log('/skip /queue');
   console.log('================================');
 }
 

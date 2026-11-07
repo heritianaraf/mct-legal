@@ -103,7 +103,7 @@ function startWeb(bot) {
       if (!isAuthed(req)) throw fail('Non connecté.', 401);
 
       if (url.pathname === '/api/state' && req.method === 'GET') {
-        return send(res, 200, { guilds: bot.getState(), library: bot.library() });
+        return send(res, 200, { guilds: bot.getState() });
       }
 
       if (url.pathname === '/api/play' && req.method === 'POST') {

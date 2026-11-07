@@ -297,7 +297,7 @@ input[type="file"] {
         <p id="stempty" class="empty">Aucune playlist pour ce serveur.</p>
         <div id="stadd" class="stack">
           <div class="row">
-            <input id="stlink" type="text" placeholder="Ajouter : lien Spotify, Google Drive ou radio">
+            <input id="stlink" type="text" placeholder="Ajouter : lien Google Drive (MP3 ou dossier)">
             <button id="stlinkbtn" class="main">Ajouter</button>
           </div>
           <label class="file">Ajouter des MP3 depuis mon PC ou TELEPHONE<input id="stfile" type="file" accept=".mp3,audio/mpeg" multiple></label>
@@ -321,7 +321,7 @@ input[type="file"] {
 
 <script>
 const $ = id => document.getElementById(id);
-let data = { guilds: [], library: [] };
+let data = { guilds: [] };
 
 async function api(url, opts = {}) {
   const res = await fetch(url, opts);
@@ -370,10 +370,8 @@ function render() {
   fill($('channel'), (g?.channels || []).map(c => [c.id, c.name]));
   if (g?.channelId) $('channel').value = g.channelId;
 
-  fill($('track'), data.library.map(name => [name, name.replace(/\.mp3$/i, '')]));
-
   const stations = g?.stations || [];
-  const icons = { radio: '📻', spotify: '🎧', drive: '☁️', file: '🎵' };
+  const icons = { drive: '☁️', file: '🎵' };
   fill($('station'), stations.map(s => [s.name, s.name + ' (' + s.items.length + ')']));
 
   const st = stations.find(s => s.name === $('station').value);
@@ -460,24 +458,9 @@ async function uploadMany(input, urlFor) {
 
 const ctx = () => ({ guildId: $('guild').value, channelId: $('channel').value });
 
-$('add').onclick = () => act(async () =>
-  (await api('/api/play', post({ ...ctx(), source: 'local', value: $('track').value }))).message);
-
-$('sp').onclick = () => act(async () => {
-  const result = await api('/api/play', post({ ...ctx(), source: 'spotify', value: $('spurl').value }));
-  $('spurl').value = '';
-  return result.message;
-});
-
 $('dr').onclick = () => act(async () => {
   const result = await api('/api/play', post({ ...ctx(), source: 'url', value: $('drurl').value }));
   $('drurl').value = '';
-  return result.message;
-});
-
-$('radio').onclick = () => act(async () => {
-  const result = await api('/api/play', post({ ...ctx(), source: 'radio', value: $('radiourl').value }));
-  $('radiourl').value = '';
   return result.message;
 });
 

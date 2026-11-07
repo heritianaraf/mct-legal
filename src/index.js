@@ -8,8 +8,6 @@ const ffmpegPath = require('ffmpeg-static');
 const { randomUUID } = require('node:crypto');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
-const dns = require('node:dns/promises');
-const net = require('node:net');
 
 const {
   Client,
@@ -23,7 +21,6 @@ const {
 } = require('discord.js');
 
 const { startWeb } = require('./web');
-const { resolveSpotify, spotifyApiEnabled } = require('./spotify');
 
 const {
   joinVoiceChannel,
@@ -63,26 +60,6 @@ const queues = new Map();
 
 fs.mkdirSync(MUSIC_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
-// ======================================
-// FICHIERS MP3
-// ======================================
-
-function getMusicFiles() {
-  return fs.readdirSync(MUSIC_DIR, { withFileTypes: true })
-    .filter(file => file.isFile() && /\.mp3$/i.test(file.name))
-    .map(file => file.name)
-    .sort((a, b) => a.localeCompare(b));
-}
-
-function findMusic(name) {
-  const requested = name.toLowerCase().trim();
-
-  return getMusicFiles().find(file =>
-    path.parse(file).name.toLowerCase() === requested ||
-    file.toLowerCase() === requested
-  );
-}
 
 // ======================================
 // TÉLÉCHARGEMENT DES MP3 DISCORD
@@ -541,21 +518,10 @@ async function refillLoop(guildId, state) {
 }
 
 function playTrack(guildId, state, track) {
-  const input = track.stream
-    ? [
-        '-protocol_whitelist', 'http,https,tcp,tls,crypto',
-        '-reconnect', '1',
-        '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '5',
-        '-rw_timeout', '15000000',
-        '-i', track.stream
-      ]
-    : ['-i', track.file];
-
   const ffmpeg = spawn(ffmpegPath || 'ffmpeg', [
     '-hide_banner',
     '-loglevel', 'error',
-    ...input,
+    '-i', track.file,
     '-vn',
     '-f', 's16le',
     '-ar', '48000',
@@ -642,188 +608,6 @@ function connectVoice(interaction, state) {
 }
 
 // ======================================
-// RADIO / FLUX AUDIO EN DIRECT
-// ======================================
-
-const RADIO_UA = 'Mozilla/5.0 (compatible; MCTMusic/1.0)';
-const BLOCKED_STREAM_HOSTS = /(^|\.)(youtube\.com|youtu\.be|spotify\.com)$/i;
-
-function isPrivateIp(ip) {
-  if (net.isIPv4(ip)) {
-    const [a, b] = ip.split('.').map(Number);
-    return a === 0 || a === 10 || a === 127 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168);
-  }
-
-  const value = ip.toLowerCase();
-  if (value.startsWith('::ffff:')) return isPrivateIp(value.slice(7));
-  return value === '::' || value === '::1' ||
-    value.startsWith('fc') || value.startsWith('fd') || value.startsWith('fe80');
-}
-
-// Empêche d'utiliser le bot pour atteindre le réseau interne du serveur.
-async function assertPublicHost(hostname) {
-  const host = hostname.replace(/^\[|\]$/g, '');
-  const addresses = net.isIP(host)
-    ? [{ address: host }]
-    : await dns.lookup(host, { all: true }).catch(() => {
-        throw new Error('Adresse de la radio introuvable.');
-      });
-
-  if (!addresses.length || addresses.some(entry => isPrivateIp(entry.address))) {
-    throw new Error('Cette adresse n’est pas autorisée.');
-  }
-}
-
-async function probeRadio(rawUrl) {
-  let url;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    throw new Error('Lien de radio invalide.');
-  }
-
-  if (!['http:', 'https:'].includes(url.protocol)) {
-    throw new Error('Le lien doit commencer par http:// ou https://.');
-  }
-
-  if (BLOCKED_STREAM_HOSTS.test(url.hostname)) {
-    throw new Error(
-      'YouTube et Spotify ne sont pas pris en charge. Colle l’adresse directe d’un flux radio (Icecast, Shoutcast, HLS).'
-    );
-  }
-
-  await assertPublicHost(url.hostname);
-
-  let response;
-  try {
-    response = await fetch(url, {
-      headers: { 'User-Agent': RADIO_UA, 'Icy-MetaData': '0' },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(10000)
-    });
-  } catch {
-    throw new Error('Impossible de joindre cette radio (adresse incorrecte ou hors ligne ?).');
-  }
-
-  // On ne lit que les en-têtes : le flux ne doit jamais être téléchargé ici.
-  await response.body?.cancel().catch(() => {});
-
-  const finalUrl = new URL(response.url);
-  if (finalUrl.hostname !== url.hostname) await assertPublicHost(finalUrl.hostname);
-
-  if (!response.ok) {
-    throw new Error(`La radio a répondu avec une erreur (${response.status}).`);
-  }
-
-  const type = (response.headers.get('content-type') || '').toLowerCase();
-  const isAudio = /^audio\//.test(type) ||
-    /^application\/(ogg|octet-stream|vnd\.apple\.mpegurl|x-mpegurl)/.test(type);
-
-  if (!isAudio) {
-    throw new Error('Ce lien n’est pas un flux audio direct (c’est probablement une page web).');
-  }
-
-  const title = (response.headers.get('icy-name') || '')
-    .replace(/[\u0000-\u001f]/g, '')
-    .trim()
-    .slice(0, 80) || finalUrl.hostname;
-
-  return { title, stream: finalUrl.href };
-}
-
-async function enqueueRadio(state, rawUrl) {
-  const { title, stream } = await probeRadio(rawUrl);
-
-  state.items.push({
-    name: `📻 ${title}`,
-    stream,
-    ffmpeg: null,
-    deleteOnFinish: false
-  });
-
-  return `📻 ${title} ajoutée à la file. Une radio ne se termine pas : utilise Suivant pour passer à la suite.`;
-}
-
-// ======================================
-// SPOTIFY : retrouve le titre dans les MP3 locaux
-// ======================================
-
-const norm = value => String(value)
-  .toLowerCase()
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g, '')
-  .replace(/[^a-z0-9]+/g, ' ')
-  .trim();
-
-function findMusicBySpotify({ title, artist }) {
-  const wanted = norm(title.replace(/\(.*?\)/g, '').replace(/\s[-–].*$/, ''));
-  if (!wanted) return null;
-
-  const files = getMusicFiles().map(file => ({ file, name: norm(path.parse(file).name) }));
-  const by = artist ? norm(artist) : '';
-
-  const match =
-    files.find(f => f.name === wanted) ||
-    files.find(f => f.name.includes(wanted) && (!by || f.name.includes(by))) ||
-    files.find(f => f.name.includes(wanted));
-
-  return match ? match.file : null;
-}
-
-async function enqueueSpotify(state, rawUrl) {
-  const { label, tracks } = await resolveSpotify(rawUrl);
-  const added = [];
-  const missing = [];
-
-  for (const track of tracks) {
-    const display = track.artist ? `${track.artist} - ${track.title}` : track.title;
-    const file = findMusicBySpotify(track);
-
-    if (!file) {
-      missing.push(display);
-      continue;
-    }
-
-    state.items.push({
-      name: path.parse(file).name,
-      file: path.join(MUSIC_DIR, file),
-      ffmpeg: null,
-      deleteOnFinish: false
-    });
-    added.push(display);
-  }
-
-  return { label, added, missing };
-}
-
-function spotifyReport({ label, added, missing }) {
-  const total = added.length + missing.length;
-
-  if (total === 1) {
-    if (added.length) {
-      return `🎧 **${label}** trouvé dans ta bibliothèque MP3 et ajouté à la file.`;
-    }
-
-    return `🎧 **${missing[0] || label}** : aucun MP3 correspondant dans le dossier music.\n` +
-      'Spotify ne fournit pas l’audio : ajoute le MP3 (nommé avec le titre du morceau) puis relance la commande.';
-  }
-
-  let text = `🎧 **${label}** : ${added.length}/${total} morceaux trouvés dans ta bibliothèque MP3 et ajoutés à la file.`;
-
-  if (missing.length) {
-    text += '\n⚠️ Sans MP3 correspondant :\n' +
-      missing.slice(0, 10).map(name => `• ${name}`).join('\n') +
-      (missing.length > 10 ? `\n… et ${missing.length - 10} autre(s)` : '');
-  }
-
-  return text.slice(0, 1900);
-}
-
-// ======================================
 // ARRÊT / API POUR L'INTERFACE WEB
 // ======================================
 
@@ -875,8 +659,6 @@ function assertGuild(guildId) {
 }
 
 const botApi = {
-  library: getMusicFiles,
-
   getState() {
     return client.guilds.cache.map(guild => {
       const state = queues.get(guild.id);
@@ -904,30 +686,8 @@ const botApi = {
 
   play(guildId, channelId, source, value, loop) {
     return webEnqueue(guildId, channelId, async state => {
-      if (source === 'local') {
-        const file = findMusic(String(value || ''));
-        if (!file) throw new Error('MP3 introuvable.');
-
-        state.items.push({
-          name: path.parse(file).name,
-          file: path.join(MUSIC_DIR, file),
-          ffmpeg: null,
-          deleteOnFinish: false
-        });
-        return `🎶 ${path.parse(file).name} ajouté à la file.`;
-      }
-
-      if (source === 'spotify') {
-        return spotifyReport(await enqueueSpotify(state, String(value || '')))
-          .replace(/\*\*/g, '');
-      }
-
       if (source === 'url') {
         return enqueueDrive(state, String(value || ''));
-      }
-
-      if (source === 'radio') {
-        return enqueueRadio(state, String(value || ''));
       }
 
       if (source === 'station') {
@@ -1044,25 +804,22 @@ client.on(Events.InteractionCreate, async interaction => {
   try {
     const command = interaction.commandName;
 
-    // PLAY : MP3 envoyé ou musique locale
+    // PLAY : MP3 envoyé ou lien Google Drive
     if (command === 'play') {
       const attachment = interaction.options.getAttachment('fichier');
-      const localName = interaction.options.getString('nom');
       const rawUrl = interaction.options.getString('url');
-      const spotifyUrl = interaction.options.getString('spotify');
-      const radioUrl = interaction.options.getString('radio');
-      const suppliedSources = [attachment, localName, rawUrl, spotifyUrl, radioUrl].filter(Boolean).length;
+      const suppliedSources = [attachment, rawUrl].filter(Boolean).length;
 
       if (suppliedSources === 0) {
         return interaction.reply({
-          content: '❌ Ajoute un MP3, un nom de fichier local, un lien Google Drive, un lien Spotify ou une radio.',
+          content: '❌ Ajoute un MP3 ou un lien Google Drive (fichier ou dossier).',
           ephemeral: true
         });
       }
 
       if (suppliedSources > 1) {
         return interaction.reply({
-          content: '❌ Choisis une seule source : fichier, nom, URL, Spotify ou radio.',
+          content: '❌ Choisis une seule source : fichier ou lien Google Drive.',
           ephemeral: true
         });
       }
@@ -1075,16 +832,9 @@ client.on(Events.InteractionCreate, async interaction => {
           return interaction.reply({ content: '❌ URL invalide.', ephemeral: true });
         }
 
-        if (parsedUrl.hostname === 'open.spotify.com' || parsedUrl.hostname === 'spotify.com') {
-          return interaction.reply({
-            content: '🎧 Pour un lien Spotify, utilise l’option **spotify** de /play.',
-            ephemeral: true
-          });
-        }
-
         if (parsedUrl.hostname !== 'drive.google.com') {
           return interaction.reply({
-            content: '❌ Pour la lecture par URL, utilisez un lien Google Drive public vers un fichier MP3.',
+            content: '❌ Pour la lecture par URL, utilise un lien Google Drive public vers un MP3 ou un dossier.',
             ephemeral: true
           });
         }
@@ -1117,23 +867,6 @@ client.on(Events.InteractionCreate, async interaction => {
             deleteScheduled: false
           };
 
-        } else if (spotifyUrl) {
-          const result = await enqueueSpotify(state, spotifyUrl);
-
-          if (!result.added.length && !state.current) {
-            stopGuild(guildId);
-          }
-
-          await interaction.editReply(spotifyReport(result));
-          startTrack(guildId);
-          return;
-
-        } else if (radioUrl) {
-          const message = await enqueueRadio(state, radioUrl);
-          await interaction.editReply(message);
-          startTrack(guildId);
-          return;
-
         } else if (rawUrl) {
           if (extractGoogleDriveFolderId(rawUrl)) {
             const message = await enqueueDrive(state, rawUrl);
@@ -1152,21 +885,6 @@ client.on(Events.InteractionCreate, async interaction => {
             deleteScheduled: false
           };
 
-        } else {
-          const fileName = findMusic(localName);
-
-          if (!fileName) {
-            throw new Error(
-              `MP3 introuvable : ${localName}. Utilise /list.`
-            );
-          }
-
-          newTrack = {
-            name: path.parse(fileName).name,
-            file: path.join(MUSIC_DIR, fileName),
-            ffmpeg: null,
-            deleteOnFinish: false
-          };
         }
 
       } catch (error) {
@@ -1185,27 +903,6 @@ client.on(Events.InteractionCreate, async interaction => {
       );
 
       startTrack(guildId);
-    }
-
-    // LIST
-    else if (command === 'list') {
-      const files = getMusicFiles();
-
-      if (!files.length) {
-        return interaction.reply({
-          content: '📂 Aucun MP3 local. Tu peux envoyer ton propre fichier avec /play.',
-          ephemeral: true
-        });
-      }
-
-      const content = files
-        .map((file, index) => `${index + 1}. ${path.parse(file).name}`)
-        .join('\n');
-
-      return interaction.reply({
-        content: `🎵 **Musiques disponibles**\n\n${content}`.slice(0, 1950),
-        ephemeral: true
-      });
     }
 
     // NEXT
@@ -1308,14 +1005,14 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 // ======================================
-// PLAYLISTS (stations) : liens Spotify, Google Drive, radios et MP3 envoyés
+// PLAYLISTS (stations) : liens Google Drive et MP3 envoyés
 // ======================================
 
 const STATIONS_FILE = path.join(MUSIC_DIR, '..', 'stations.json');
 const PLAYLIST_DIR = path.join(MUSIC_DIR, 'playlists');
 const MAX_STATIONS = 25;
 const MAX_STATION_ITEMS = 50;
-const ITEM_ICONS = { radio: '📻', spotify: '🎧', drive: '☁️', file: '🎵' };
+const ITEM_ICONS = { drive: '☁️', file: '🎵' };
 
 fs.mkdirSync(PLAYLIST_DIR, { recursive: true });
 
@@ -1378,20 +1075,10 @@ async function buildItem(source) {
   try {
     url = new URL(String(source || '').trim());
   } catch {
-    throw new Error('Colle un lien valide : Spotify, Google Drive ou adresse d’une radio.');
+    throw new Error('Colle un lien Google Drive valide (fichier ou dossier).');
   }
 
   const host = url.hostname.replace(/^www\./, '');
-
-  if (host === 'open.spotify.com') {
-    const { label, tracks } = await resolveSpotify(url.href);
-    return {
-      type: 'spotify',
-      value: url.href,
-      label,
-      info: `${tracks.length} morceau(x), lus depuis tes MP3 locaux`
-    };
-  }
 
   if (host === 'drive.google.com') {
     const folder = extractGoogleDriveFolderId(url.href);
@@ -1405,14 +1092,7 @@ async function buildItem(source) {
     };
   }
 
-  if (/(^|\.)(music\.apple\.com|soundcloud\.com)$/i.test(host)) {
-    throw new Error(
-      'Apple Music et SoundCloud ne donnent pas accès à l’audio : le bot ne peut pas les lire. Utilise Spotify (lu depuis tes MP3), Google Drive, un MP3 ou une radio.'
-    );
-  }
-
-  const radio = await probeRadio(url.href);
-  return { type: 'radio', value: url.href, label: radio.title, info: 'radio en direct' };
+  throw new Error('Lien non pris en charge : utilise un lien Google Drive (fichier ou dossier).');
 }
 
 // Crée une playlist ; sans lien, elle est créée vide (un nom est alors obligatoire).
@@ -1543,24 +1223,18 @@ async function enqueueStation(state, station) {
   const before = new Set(state.items);
   const notes = [];
 
-  for (const [index, item] of station.items.entries()) {
+  for (const item of station.items) {
     const label = item.label || item.type;
 
     try {
-      if (item.type === 'radio') {
-        await enqueueRadio(state, item.value);
-        if (index < station.items.length - 1) {
-          notes.push(`📻 ${label} ne se termine pas : utilise Suivant pour passer à la suite.`);
-        }
-      } else if (item.type === 'spotify') {
-        const { missing } = await enqueueSpotify(state, item.value);
-        if (missing.length) notes.push(`🎧 ${label} : ${missing.length} morceau(x) sans MP3 correspondant.`);
-      } else if (item.type === 'drive') {
+      if (item.type === 'drive') {
         await enqueueDrive(state, item.value);
       } else if (item.type === 'file') {
         const file = path.join(PLAYLIST_DIR, path.basename(String(item.value)));
         if (!fs.existsSync(file)) throw new Error('fichier introuvable sur le serveur.');
         state.items.push({ name: label, file, ffmpeg: null, deleteOnFinish: false });
+      } else {
+        notes.push(`⚠️ ${label} : ce type d’élément n’est plus pris en charge, retire-le de la playlist.`);
       }
     } catch (error) {
       notes.push(`⚠️ ${label} : ${error.message}`);
@@ -1618,9 +1292,9 @@ client.on(Events.InteractionCreate, async interaction => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('source')
-              .setLabel('Playlist ou URL de la station')
+              .setLabel('Lien Google Drive')
               .setStyle(TextInputStyle.Paragraph)
-              .setPlaceholder('Lien Spotify, Google Drive ou URL radio')
+              .setPlaceholder('Lien Google Drive (fichier ou dossier)')
               .setRequired(true)
               .setMaxLength(500)
           ),
@@ -1794,16 +1468,9 @@ client.on(Events.InteractionCreate, async interaction => {
 client.once(Events.ClientReady, readyClient => {
   console.log('================================');
   console.log(`🎵 MCT MUSIC connecté : ${readyClient.user.tag}`);
-  console.log('✅ Lecture MP3 locale activée');
   console.log('✅ Lecture des MP3 joints aux commandes /play activée');
-  console.log('✅ Lecture des MP3 publics Google Drive activée');
-  console.log('✅ Radios / flux audio en direct activés');
-  console.log('✅ Playlists (/station) : Spotify, Drive, radios et MP3');
-  console.log(
-    spotifyApiEnabled()
-      ? '✅ Liens Spotify : API officielle activée (repli sur la page publique), titres retrouvés dans les MP3 locaux'
-      : '✅ Liens Spotify : page publique (ajoute SPOTIFY_CLIENT_ID et SPOTIFY_CLIENT_SECRET dans .env pour l’API), titres retrouvés dans les MP3 locaux'
-  );
+  console.log('✅ Lecture des MP3 et dossiers publics Google Drive activée');
+  console.log('✅ Playlists (/station) : Google Drive et MP3');
   console.log('================================');
 });
 
