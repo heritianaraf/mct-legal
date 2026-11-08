@@ -681,10 +681,11 @@ let volTouched = 0; // dernier réglage du curseur (évite que le rafraîchissem
 const selected = new Set(); // morceaux cochés dans la file : "index|nom"
 const picked = new Set();   // playlists cochées (ajout de la file)
 let showList = false;       // contenu de la playlist affiché ?
-let unlocked = null;        // { name, password, items } : liste déverrouillée par le mot de passe
+let unlocked = null;        // { name, items } : liste affichée (publique, sans mot de passe)
 let currentName = null;     // playlist affichée dans le menu glissant
 let lastStation = null;
-let pendingKind = null;     // action qui attend le mot de passe : show | delete | current
+let pendingKind = null;     // action qui attend le mot de passe : delete | current | remove
+let pendingIndex = null;    // numéro du morceau à retirer (action « remove »)
 async function api(url, opts = {}) {
   const res = await fetch(url, opts);
   const json = await res.json().catch(() => ({}));
@@ -737,18 +738,13 @@ function fill(select, items) {
 
 function removeItem(name, index) {
   if (!unlocked || unlocked.name !== name) return;
-  act(async () => {
-    const guildId = $('guild').value;
-    const result = await api('/api/station/remove-item', post({ guildId, name, index, password: unlocked.password }));
-    const again = await api('/api/station/items', post({ guildId, name, password: unlocked.password }));
-    unlocked.items = again.items || [];
-    return result.message;
-  });
+  pendingIndex = index;
+  askPassword('remove', 'Mot de passe pour retirer ce morceau de');
 }
 
 function playItem(name, index) {
   if (!unlocked || unlocked.name !== name) return;
-  act(async () => (await api('/api/station/play-item', post({ ...ctx(), name, index, password: unlocked.password }))).message);
+  act(async () => (await api('/api/station/play-item', post({ ...ctx(), name, index }))).message);
 }
 
 function queueAction(index, name, action) {
@@ -1101,8 +1097,8 @@ function runWithPassword(kind, password) {
 
   if (kind === 'show') {
     return act(async () => {
-      const result = await api('/api/station/items', post({ guildId, name, password }));
-      unlocked = { name, password, items: result.items || [] };
+      const result = await api('/api/station/items', post({ guildId, name }));
+      unlocked = { name, items: result.items || [] };
       showList = true;
       return '';
     });
@@ -1122,8 +1118,17 @@ function runWithPassword(kind, password) {
     return act(async () => {
       const result = await api('/api/station/add-current', post({ guildId, name, password }));
       if (showList && unlocked && unlocked.name === name) {
-        unlocked.items = (await api('/api/station/items', post({ guildId, name, password: unlocked.password }))).items || [];
+        unlocked.items = (await api('/api/station/items', post({ guildId, name }))).items || [];
       }
+      return result.message;
+    });
+  }
+
+  if (kind === 'remove') {
+    const index = pendingIndex;
+    return act(async () => {
+      const result = await api('/api/station/remove-item', post({ guildId, name, index, password }));
+      unlocked = { name, items: (await api('/api/station/items', post({ guildId, name }))).items || [] };
       return result.message;
     });
   }
@@ -1136,7 +1141,7 @@ $('stshow').onclick = () => {
     render();
     return;
   }
-  askPassword('show', 'Mot de passe pour afficher la liste de');
+  runWithPassword('show', '');
 };
 
 $('stdel').onclick = () => askPassword('delete', 'Mot de passe pour supprimer');

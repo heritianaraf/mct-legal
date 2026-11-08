@@ -1414,12 +1414,11 @@ const botApi = {
   },
 
   // Lance tout de suite UN morceau d'une playlist (le reste de la file est conservé).
-  playStationItem(guildId, channelId, name, index, password) {
+  playStationItem(guildId, channelId, name, index) {
     assertGuild(guildId);
     const id = String(guildId);
     const station = findStation(id, name);
     if (!station) throw new Error('Playlist introuvable.');
-    assertStationPassword(station, password, 'web');
 
     const position = Number(index);
     const item = station.items[position];
@@ -1442,11 +1441,11 @@ const botApi = {
       return [`▶️ ${item.label || added[0].name} : lecture immédiate.`, ...notes.slice(0, 3)].join('\n');
     });
   },
-  stationItems(guildId, name, password) {
+  // La liste d'une playlist est publique : seul le mot de passe protège les modifications.
+  stationItems(guildId, name) {
     assertGuild(guildId);
     const station = findStation(String(guildId), name);
     if (!station) throw new Error('Playlist introuvable.');
-    assertStationPassword(station, password, 'web');
     return station.items.map(item => ({ type: item.type, label: item.label }));
   },
   removeStationItem(guildId, name, index, password) {
@@ -2265,19 +2264,6 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.editReply(`🗑️ Playlist **${station.name}** supprimée.`);
     }
 
-    // Validation du formulaire « afficher la playlist »
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('station-list:')) {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-      const station = findStation(interaction.guildId, interaction.customId.slice('station-list:'.length));
-      if (!station) throw new Error('Playlist introuvable.');
-
-      assertStationPassword(station, interaction.fields.getTextInputValue('password'), interaction.user.id);
-
-      const lines = station.items.map(itemLine);
-      return interaction.editReply(`📻 **${station.name}**\n\n${lines.join('\n') || 'Playlist vide.'}`.slice(0, 1950));
-    }
-
     // Validation du formulaire « retirer un morceau »
     if (interaction.isModalSubmit() && interaction.customId.startsWith('station-remove:')) {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -2354,13 +2340,6 @@ client.on(Events.InteractionCreate, async interaction => {
         const station = findStation(guildId, wanted);
         if (!station) {
           return interaction.reply({ content: '❌ Playlist introuvable.', flags: MessageFlags.Ephemeral });
-        }
-
-        // Le contenu d'une playlist protégée n'est montré qu'avec son mot de passe.
-        if (station.password) {
-          return interaction.showModal(
-            passwordModal(`station-list:${station.name}`, 'Afficher la playlist', station.name)
-          );
         }
 
         const lines = station.items.map(itemLine);
@@ -2866,10 +2845,28 @@ const youtubeJobs = new Map();          // identifiant -> téléchargement en co
 
 const youtubeStoredName = id => `yt-${id}.mp3`;
 
+// Accepte aussi les entrées ajoutées à la main : un simple lien (texte) ou { url } sans identifiant.
+function normalizeYoutubeEntry(entry) {
+  const item = typeof entry === 'string' ? { url: entry } : { ...entry };
+
+  if (!item.id) item.id = extractYoutubeId(String(item.url || '')) || undefined;
+
+  if (item.id) {
+    item.url = item.url || youtubeUrlFor(item.id);
+    item.title = item.title || '';
+    item.file = item.file || null;
+    item.status = item.status || 'pending';
+    item.error = item.error || '';
+  }
+
+  return item;
+}
+
 function loadYoutubeList() {
   try {
     const raw = JSON.parse(fs.readFileSync(YOUTUBE_FILE, 'utf8'));
-    return Array.isArray(raw.items) ? raw.items : [];
+    const list = Array.isArray(raw) ? raw : raw.items;
+    return Array.isArray(list) ? list.map(normalizeYoutubeEntry) : [];
   } catch {
     return [];
   }
@@ -3094,11 +3091,25 @@ function addYoutube(guildId, channelId, rawUrl) {
   return runYoutubeJob(id, { guildId, channelId });
 }
 
-// Au démarrage : reprend les téléchargements interrompus.
-function resumeYoutube() {
+// Télécharge automatiquement tous les liens de youtube.json dont le MP3 n'est pas sur le serveur
+// (nouveaux liens, téléchargements interrompus, MP3 disparus). Les téléchargements se font un par un.
+// Au démarrage (retryErrors) on réessaie aussi les liens en erreur ; ensuite, seulement les nouveaux.
+function syncYoutube({ retryErrors = false } = {}) {
+  let queued = 0;
+
   for (const item of loadYoutubeList()) {
-    if (item.status === 'pending' || item.status === 'downloading') runYoutubeJob(item.id).catch(() => {});
+    if (!item.id) continue;
+
+    const stored = item.file && path.join(PLAYLIST_DIR, path.basename(String(item.file)));
+    if (item.status === 'ok' && stored && fs.existsSync(stored)) continue;
+    if (item.status === 'error' && !retryErrors) continue;
+    if (youtubeJobs.has(item.id)) continue;
+
+    runYoutubeJob(item.id).catch(() => {});
+    queued++;
   }
+
+  if (queued) console.log(`⬇️ youtube.json : ${queued} lien(s) à télécharger.`);
 }
 
 // ======================================
@@ -3137,7 +3148,8 @@ client.once(Events.ClientReady, async readyClient => {
   await restoreBackup();
   await restoreYoutubeBackup();
   await restoreMissingFiles();
-  resumeYoutube();
+  syncYoutube({ retryErrors: true });
+  setInterval(() => syncYoutube(), 10 * 60 * 1000).unref?.();
   console.log('================================');
   console.log(`🎵 MCT MUSIC connecté : ${readyClient.user.tag}`);
   console.log('✅ Lecture des MP3 joints aux commandes /play activée');

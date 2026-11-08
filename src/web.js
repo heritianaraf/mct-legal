@@ -189,13 +189,13 @@ function startWeb(bot) {
       }
 
       if (url.pathname === '/api/station/items' && req.method === 'POST') {
-        const { guildId, name, password } = await readJson(req);
-        return send(res, 200, { items: bot.stationItems(guildId, name, password) });
+        const { guildId, name } = await readJson(req);
+        return send(res, 200, { items: bot.stationItems(guildId, name) });
       }
 
       if (url.pathname === '/api/station/play-item' && req.method === 'POST') {
-        const { guildId, channelId, name, index, password } = await readJson(req);
-        return send(res, 200, { message: await bot.playStationItem(guildId, channelId, name, index, password) });
+        const { guildId, channelId, name, index } = await readJson(req);
+        return send(res, 200, { message: await bot.playStationItem(guildId, channelId, name, index) });
       }
 
       if (url.pathname === '/api/station/add-current' && req.method === 'POST') {
