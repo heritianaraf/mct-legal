@@ -520,7 +520,7 @@ button.toggle {
         
       
         <div class="row">
-          <input id="drurl" type="text" placeholder="Lien Google Drive (MP3 ou dossier)">
+          <input id="drurl" type="text" placeholder="Lien YouTube ou Google Drive (MP3 ou dossier)">
           <button id="dr" class="add">Ajouter</button>
         </div>
         
@@ -576,7 +576,7 @@ button.toggle {
                 <div id="stadd" class="stack">
                   <button id="stcur" class="add">➕ Ajouter le morceau en cours</button>
                   <div class="row">
-                    <input id="stlink" type="text" placeholder="Ajouter : lien Google Drive (MP3 ou dossier)">
+                    <input id="stlink" type="text" placeholder="Ajouter : lien YouTube ou Google Drive (MP3 ou dossier)">
                     <button id="stlinkbtn" class="add">Ajouter</button>
                   </div>
                   <label class="file add">Ajouter des MP3 depuis mon PC ou TELEPHONE<input id="stfile" type="file" accept=".mp3,audio/mpeg" multiple></label>
@@ -718,7 +718,7 @@ function closePrompt() {
 }
 
 function renderStations(g, stations) {
-  const icons = { drive: '☁️', file: '🎵' };
+  const icons = { drive: '☁️', file: '🎵', youtube: '▶️' };
 
   if (!stations.some(s => s.name === currentName)) currentName = stations[0]?.name || null;
   const idx = stations.findIndex(s => s.name === currentName);

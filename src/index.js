@@ -241,6 +241,212 @@ async function listDriveFolderMp3(folderId) {
 
 // Un lien de dossier ajoute tous les MP3 (téléchargés un par un, au moment de les lire).
 // Un lien de fichier garde le comportement habituel.
+// ======================================
+// YOUTUBE (yt-dlp, téléchargé automatiquement)
+// ======================================
+
+const YTDLP_PATH = path.join(DATA_DIR, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+const YTDLP_COOKIES = path.join(DATA_DIR, 'youtube-cookies.txt');
+const YTDLP_REFRESH_MS = 7 * 24 * 3600 * 1000;
+const YTDLP_TIMEOUT_MS = 5 * 60 * 1000;
+const YTDLP_MAX_SECONDS = 2 * 3600;
+let ytdlpReady = null;
+
+// Retourne l'identifiant d'une vidéo YouTube (watch, youtu.be, shorts, embed, live) ou null.
+function extractYoutubeId(rawUrl) {
+  let url;
+  try {
+    url = new URL(String(rawUrl || '').trim());
+  } catch {
+    return null;
+  }
+
+  const host = url.hostname.replace(/^(www|m|music)\./, '');
+  let id = null;
+
+  if (host === 'youtu.be') {
+    id = url.pathname.split('/')[1];
+  } else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+    if (url.pathname === '/watch') {
+      id = url.searchParams.get('v');
+    } else {
+      id = url.pathname.match(/^\/(?:shorts|embed|live|v)\/([^/]+)/)?.[1];
+    }
+  }
+
+  return /^[A-Za-z0-9_-]{11}$/.test(id || '') ? id : null;
+}
+
+const youtubeUrlFor = id => `https://www.youtube.com/watch?v=${id}`;
+
+// Titre de la vidéo (sans yt-dlp) ; vérifie aussi que la vidéo existe et n'est pas privée.
+async function fetchYoutubeTitle(id) {
+  const fallback = 'Vidéo YouTube';
+
+  try {
+    const response = await fetch(
+      `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(youtubeUrlFor(id))}`,
+      { signal: AbortSignal.timeout(10000) }
+    );
+
+    if ([401, 403, 404].includes(response.status)) {
+      throw Object.assign(new Error('Vidéo introuvable, privée ou intégration désactivée.'), { definitive: true });
+    }
+    if (!response.ok) return fallback;
+
+    const data = await response.json();
+    return String(data.title || fallback).replace(/[\u0000-\u001f]/g, '').trim().slice(0, 70) || fallback;
+  } catch (error) {
+    if (error.definitive) throw error;
+    return fallback;
+  }
+}
+
+// Télécharge yt-dlp au premier usage (puis une fois par semaine) : aucune installation à faire.
+function ensureYtDlp() {
+  ytdlpReady ||= (async () => {
+    const fresh = fs.existsSync(YTDLP_PATH) && Date.now() - fs.statSync(YTDLP_PATH).mtimeMs < YTDLP_REFRESH_MS;
+
+    if (!fresh) {
+      const asset = process.platform === 'win32'
+        ? 'yt-dlp.exe'
+        : process.platform === 'darwin'
+          ? 'yt-dlp_macos'
+          : process.arch === 'arm64' ? 'yt-dlp_linux_aarch64' : 'yt-dlp_linux';
+
+      try {
+        const response = await fetch(
+          `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${asset}`,
+          { signal: AbortSignal.timeout(120000) }
+        );
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const tmp = `${YTDLP_PATH}.tmp`;
+        await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(tmp));
+        await fsp.chmod(tmp, 0o755);
+        await fsp.rename(tmp, YTDLP_PATH);
+      } catch (error) {
+        // Sans ancienne version à réutiliser, on ne peut pas continuer.
+        if (!fs.existsSync(YTDLP_PATH)) throw new Error(`yt-dlp indisponible (${error.message}).`);
+      }
+    }
+
+    setTimeout(() => { ytdlpReady = null; }, YTDLP_REFRESH_MS).unref();
+  })().catch(error => {
+    ytdlpReady = null;
+    throw error;
+  });
+
+  return ytdlpReady;
+}
+
+function youtubeErrorMessage(output) {
+  if (/sign in to confirm|not a bot|confirm you.re not/i.test(output)) {
+    return 'YouTube bloque ce serveur (vérification anti-robot). Ajoute des cookies YouTube dans la variable YOUTUBE_COOKIES.';
+  }
+  if (/age|inappropriate/i.test(output) && /confirm|restrict|sign in/i.test(output)) {
+    return 'Vidéo avec restriction d’âge : des cookies YouTube sont nécessaires (variable YOUTUBE_COOKIES).';
+  }
+  if (/private video|unavailable|removed|terminated|not available|copyright/i.test(output)) {
+    return 'Vidéo indisponible, privée ou bloquée.';
+  }
+
+  const line = output.split('\n').reverse().find(l => /error/i.test(l)) || output.trim().split('\n').pop() || '';
+  return line.replace(/^ERROR:\s*/i, '').slice(0, 200) || 'téléchargement impossible.';
+}
+
+// Télécharge l'audio d'une vidéo YouTube dans UPLOAD_DIR et retourne le chemin du fichier.
+async function downloadYoutubeAudio(rawUrl) {
+  const id = extractYoutubeId(rawUrl);
+  if (!id) throw new Error('Lien YouTube invalide.');
+
+  await ensureYtDlp();
+
+  const prefix = `${Date.now()}-${randomUUID()}-yt`;
+  const args = [
+    '--no-playlist', '--no-warnings', '--no-progress', '--no-part',
+    '-f', 'bestaudio/best',
+    '--match-filter', `!is_live & duration<=${YTDLP_MAX_SECONDS}`,
+    '--max-filesize', '150M',
+    '--js-runtimes', 'node',
+    '-o', path.join(UPLOAD_DIR, `${prefix}.%(ext)s`)
+  ];
+
+  if (process.env.YOUTUBE_COOKIES) {
+    fs.writeFileSync(YTDLP_COOKIES, process.env.YOUTUBE_COOKIES.replace(/\\n/g, '\n'), { mode: 0o600 });
+    args.push('--cookies', YTDLP_COOKIES);
+  }
+
+  args.push(youtubeUrlFor(id));
+
+  const { code, output } = await new Promise((resolve, reject) => {
+    const child = spawn(YTDLP_PATH, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let text = '';
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, YTDLP_TIMEOUT_MS);
+
+    const collect = chunk => { text = (text + chunk).slice(-4000); };
+    child.stdout.on('data', collect);
+    child.stderr.on('data', collect);
+
+    child.on('error', error => {
+      clearTimeout(timer);
+      reject(new Error(`yt-dlp : ${error.message}`));
+    });
+
+    child.on('close', exitCode => {
+      clearTimeout(timer);
+      resolve({ code: timedOut ? 'timeout' : exitCode, output: text });
+    });
+  });
+
+  const produced = (await fsp.readdir(UPLOAD_DIR)).filter(name => name.startsWith(`${prefix}.`));
+  const file = produced.find(name => !/\.(part|ytdl|tmp)$/i.test(name));
+
+  for (const name of produced) {
+    if (name !== file) await fsp.unlink(path.join(UPLOAD_DIR, name)).catch(() => {});
+  }
+
+  if (code === 'timeout') {
+    if (file) await fsp.unlink(path.join(UPLOAD_DIR, file)).catch(() => {});
+    throw new Error('Le téléchargement YouTube a expiré (plus de 5 minutes).');
+  }
+
+  if (code !== 0 || !file) {
+    if (file) await fsp.unlink(path.join(UPLOAD_DIR, file)).catch(() => {});
+    if (code === 0) throw new Error(`vidéo ignorée (en direct, plus de ${YTDLP_MAX_SECONDS / 3600} h ou trop volumineuse).`);
+    throw new Error(youtubeErrorMessage(output));
+  }
+
+  return path.join(UPLOAD_DIR, file);
+}
+
+async function enqueueYoutube(state, rawUrl) {
+  const id = extractYoutubeId(rawUrl);
+  if (!id) throw new Error('Colle le lien d’une vidéo YouTube (youtube.com/watch?v=… ou youtu.be/…).');
+
+  const title = await fetchYoutubeTitle(id);
+
+  state.items.push({
+    name: title,
+    youtubeUrl: youtubeUrlFor(id),
+    file: null,
+    ffmpeg: null,
+    deleteOnFinish: true,
+    deleteScheduled: false
+  });
+
+  return `▶️ ${title} (YouTube) ajouté à la file.`;
+}
+
+// Lien collé pour jouer tout de suite : YouTube ou Google Drive
+const enqueueLink = (state, rawUrl) =>
+  extractYoutubeId(rawUrl) ? enqueueYoutube(state, rawUrl) : enqueueDrive(state, rawUrl);
+
 async function enqueueDrive(state, rawUrl) {
   const folderId = extractGoogleDriveFolderId(rawUrl);
 
@@ -397,7 +603,7 @@ const HISTORY_MAX = 5;
 
 // Les MP3 envoyés sont supprimés après lecture : on en garde un lien (.keep) pour pouvoir les rejouer.
 function keepCopy(track) {
-  if (!track.deleteOnFinish || track.driveId || !track.file) return;
+  if (!track.deleteOnFinish || track.driveId || track.youtubeUrl || !track.file) return;
 
   const keep = `${track.file}.${Date.now()}.keep`;
   try {
@@ -419,6 +625,7 @@ function dropKeep(track) {
 
 function snapshotTrack(track) {
   if (track.driveId) return { name: track.name, driveId: track.driveId };
+  if (track.youtubeUrl) return { name: track.name, youtubeUrl: track.youtubeUrl };
   if (!track.file) return null;
   if (!track.deleteOnFinish) return { name: track.name, file: track.file, persistent: true };
   if (!track.keepFile) return null;
@@ -426,6 +633,9 @@ function snapshotTrack(track) {
 }
 
 function trackFromSnapshot(snap) {
+  if (snap.youtubeUrl) {
+    return { name: snap.name, youtubeUrl: snap.youtubeUrl, file: null, ffmpeg: null, deleteOnFinish: true, deleteScheduled: false };
+  }
   if (snap.driveId) {
     return { name: snap.name, driveId: snap.driveId, file: null, ffmpeg: null, deleteOnFinish: true, deleteScheduled: false };
   }
@@ -569,8 +779,8 @@ function startTrack(guildId) {
 
   console.log('🎵 Lecture :', track.name);
 
-  if (track.driveId && !track.file) {
-    downloadDriveFileById(track.driveId)
+  if ((track.driveId || track.youtubeUrl) && !track.file) {
+    (track.driveId ? downloadDriveFileById(track.driveId) : downloadYoutubeAudio(track.youtubeUrl))
       .then(filePath => {
         track.file = filePath;
 
@@ -582,7 +792,7 @@ function startTrack(guildId) {
         playTrack(guildId, state, track);
       })
       .catch(error => {
-        console.error('Erreur Google Drive :', error.message);
+        console.error('Erreur de téléchargement :', error.message);
 
         if (state.current === track) {
           state.current = null;
@@ -947,7 +1157,7 @@ const botApi = {
   play(guildId, channelId, source, value, loop) {
     return webEnqueue(guildId, channelId, async state => {
       if (source === 'url') {
-        return enqueueDrive(state, String(value || ''));
+        return enqueueLink(state, String(value || ''));
       }
 
       if (source === 'station') {
@@ -1123,7 +1333,7 @@ const botApi = {
 
       if (!current) {
         startTrack(id);
-      } else if (current.driveId && !current.file) {
+      } else if ((current.driveId || current.youtubeUrl) && !current.file) {
         // morceau Drive encore en téléchargement : on l'abandonne
         cleanupTrack(current);
         state.current = null;
@@ -1161,7 +1371,7 @@ const botApi = {
 
       if (!current) {
         startTrack(id);
-      } else if ((current.driveId && !current.file) || state.player.state.status === AudioPlayerStatus.Idle) {
+      } else if (((current.driveId || current.youtubeUrl) && !current.file) || state.player.state.status === AudioPlayerStatus.Idle) {
         cleanupTrack(current);
         state.current = null;
         startTrack(id);
@@ -1203,14 +1413,14 @@ client.on(Events.InteractionCreate, async interaction => {
 
       if (suppliedSources === 0) {
         return interaction.reply({
-          content: '❌ Ajoute un MP3 ou un lien Google Drive (fichier ou dossier).',
+          content: '❌ Ajoute un MP3, un lien YouTube ou un lien Google Drive (fichier ou dossier).',
           ephemeral: true
         });
       }
 
       if (suppliedSources > 1) {
         return interaction.reply({
-          content: '❌ Choisis une seule source : fichier ou lien Google Drive.',
+          content: '❌ Choisis une seule source : fichier ou lien (YouTube / Google Drive).',
           ephemeral: true
         });
       }
@@ -1223,9 +1433,9 @@ client.on(Events.InteractionCreate, async interaction => {
           return interaction.reply({ content: '❌ URL invalide.', ephemeral: true });
         }
 
-        if (parsedUrl.hostname !== 'drive.google.com') {
+        if (parsedUrl.hostname !== 'drive.google.com' && !extractYoutubeId(rawUrl)) {
           return interaction.reply({
-            content: '❌ Pour la lecture par URL, utilise un lien Google Drive public vers un MP3 ou un dossier.',
+            content: '❌ Pour la lecture par URL, utilise un lien YouTube ou un lien Google Drive public vers un MP3 ou un dossier.',
             ephemeral: true
           });
         }
@@ -1259,6 +1469,13 @@ client.on(Events.InteractionCreate, async interaction => {
           };
 
         } else if (rawUrl) {
+          if (extractYoutubeId(rawUrl)) {
+            const message = await enqueueYoutube(state, rawUrl);
+            await interaction.editReply(message);
+            startTrack(guildId);
+            return;
+          }
+
           if (extractGoogleDriveFolderId(rawUrl)) {
             const message = await enqueueDrive(state, rawUrl);
             await interaction.editReply(message);
@@ -1417,7 +1634,7 @@ const STATIONS_FILE = path.join(DATA_DIR, 'stations.json');
 const PLAYLIST_DIR = path.join(MUSIC_DIR, 'playlists');
 const MAX_STATIONS = 25;
 const MAX_STATION_ITEMS = 500;
-const ITEM_ICONS = { drive: '☁️', file: '🎵' };
+const ITEM_ICONS = { drive: '☁️', file: '🎵', youtube: '▶️' };
 
 fs.mkdirSync(PLAYLIST_DIR, { recursive: true });
 
@@ -1532,10 +1749,24 @@ async function buildItem(source) {
   try {
     url = new URL(String(source || '').trim());
   } catch {
-    throw new Error('Colle un lien Google Drive valide (fichier ou dossier).');
+    throw new Error('Colle un lien YouTube ou Google Drive valide.');
   }
 
   const host = url.hostname.replace(/^www\./, '');
+
+  const youtubeId = extractYoutubeId(url.href);
+  if (youtubeId) {
+    return {
+      type: 'youtube',
+      value: youtubeUrlFor(youtubeId),
+      label: await fetchYoutubeTitle(youtubeId),
+      info: 'une vidéo YouTube'
+    };
+  }
+
+  if (/(^|\.)(youtube\.com|youtu\.be)$/.test(host)) {
+    throw new Error('Colle le lien d’une vidéo YouTube (pas celui d’une playlist ou d’une chaîne).');
+  }
 
   if (host === 'drive.google.com') {
     const folder = extractGoogleDriveFolderId(url.href);
@@ -1549,7 +1780,7 @@ async function buildItem(source) {
     };
   }
 
-  throw new Error('Lien non pris en charge : utilise un lien Google Drive (fichier ou dossier).');
+  throw new Error('Lien non pris en charge : utilise un lien YouTube ou Google Drive (fichier ou dossier).');
 }
 
 // Crée une playlist ; sans lien, elle est créée vide (un nom est alors obligatoire).
@@ -1714,7 +1945,9 @@ async function saveTracksToStations(guildId, tracks, stationNames) {
       const label = String(track.name).slice(0, 70);
 
       try {
-        if (track.driveId) {
+        if (track.youtubeUrl) {
+          addStationItem(guildId, station.name, { type: 'youtube', value: track.youtubeUrl, label });
+        } else if (track.driveId) {
           addStationItem(guildId, station.name, {
             type: 'drive',
             value: `https://drive.google.com/file/d/${track.driveId}/view`,
@@ -1762,6 +1995,10 @@ async function enqueueStation(state, station) {
     try {
       if (item.type === 'drive') {
         await enqueueDrive(state, item.value);
+      } else if (item.type === 'youtube') {
+        const id = extractYoutubeId(item.value);
+        if (!id) throw new Error('lien YouTube invalide.');
+        state.items.push({ name: label, youtubeUrl: youtubeUrlFor(id), file: null, ffmpeg: null, deleteOnFinish: true, deleteScheduled: false });
       } else if (item.type === 'file') {
         const file = path.join(PLAYLIST_DIR, path.basename(String(item.value)));
         if (!fs.existsSync(file)) await restoreStoredFile(item.value);
@@ -1873,9 +2110,9 @@ client.on(Events.InteractionCreate, async interaction => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('source')
-              .setLabel('Lien Google Drive')
+              .setLabel('Lien YouTube ou Google Drive')
               .setStyle(TextInputStyle.Paragraph)
-              .setPlaceholder('Lien Google Drive (fichier ou dossier)')
+              .setPlaceholder('Lien YouTube ou Google Drive (fichier ou dossier)')
               .setRequired(true)
               .setMaxLength(500)
           ),
@@ -2382,7 +2619,8 @@ client.once(Events.ClientReady, async readyClient => {
   console.log(`🎵 MCT MUSIC connecté : ${readyClient.user.tag}`);
   console.log('✅ Lecture des MP3 joints aux commandes /play activée');
   console.log('✅ Lecture des MP3 et dossiers publics Google Drive activée');
-  console.log('✅ Playlists (/station) : Google Drive et MP3');
+  console.log('✅ Playlists (/station) : YouTube, Google Drive et MP3');
+  console.log('✅ Liens YouTube (yt-dlp téléchargé automatiquement)');
   console.log('✅ Soundboard du serveur (/soundboard)');
   console.log('================================');
 });
