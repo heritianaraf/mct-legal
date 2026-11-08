@@ -117,6 +117,11 @@ function startWeb(bot) {
         return send(res, 200, { message: await bot.play(guildId, channelId, source, value, loop) });
       }
 
+      if (url.pathname === '/api/activity' && req.method === 'POST') {
+        const { guildId, channelId, url: videoUrl } = await readJson(req);
+        return send(res, 200, { message: bot.watch(guildId, channelId, videoUrl, activity) });
+      }
+
       if (url.pathname === '/api/soundboard' && req.method === 'GET') {
         const sounds = await bot.soundList(url.searchParams.get('guildId'), url.searchParams.get('force') === '1');
         return send(res, 200, { sounds });

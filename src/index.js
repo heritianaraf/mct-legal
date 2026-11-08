@@ -1203,6 +1203,22 @@ const botApi = {
     return guild?.voiceStates.cache.get(String(userId))?.channelId === String(channelId);
   },
 
+  // Dashboard « Play activité » : prépare la vidéo YouTube dans le salon vocal choisi.
+  // Discord n'autorise un bot à ouvrir une Activité que depuis une commande : la vidéo est donc
+  // téléchargée et mise en attente, puis lue dès que quelqu'un ouvre l'Activité (/regarder).
+  watch(guildId, channelId, rawUrl, activity) {
+    assertGuild(guildId);
+
+    const channel = client.guilds.cache.get(String(guildId))?.channels.cache.get(String(channelId));
+    if (!channel?.isVoiceBased()) throw new Error('Choisis un salon vocal.');
+
+    const id = extractYoutubeId(rawUrl);
+    if (!id) throw new Error('Colle le lien d’une vidéo YouTube (youtube.com/watch?v=… ou youtu.be/…).');
+
+    activity.setVideo(guildId, channel.id, id, 'Dashboard');
+    return `🎬 Vidéo en préparation pour « ${channel.name} ». Lance /regarder dans ce salon vocal pour ouvrir l’Activité.`;
+  },
+
   volume(guildId, level) {
     assertGuild(guildId);
     return `🔊 Volume : ${setVolume(guildId, level)}%`;

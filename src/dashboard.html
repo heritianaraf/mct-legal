@@ -433,6 +433,40 @@ button.toggle {
     flex: none;
 }
 
+/* Boutons icône (œil) */
+button.eye {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    flex: none;
+}
+
+#app .row > button.eye {
+    flex: 0 0 38px;
+}
+
+button.eye svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    pointer-events: none;
+}
+
+/* Bouton « Play activité » : visible seulement avec un lien YouTube */
+button.activity {
+    background: var(--pink);
+    border-color: transparent;
+    color: #fff;
+    box-shadow: 0 6px 22px rgba(255, 61, 154, .4);
+}
+
 [hidden] {
     display: none !important;
 }
@@ -480,7 +514,7 @@ button.toggle {
     <div class="card" id="card-dest">
       <div class="card-head">
         <h2>Destination</h2>
-        <button type="button" class="ghost toggle" data-toggle="dest" aria-expanded="true">Masquer</button>
+        <button type="button" class="ghost toggle eye" data-toggle="dest" aria-expanded="true" aria-label="Masquer" title="Masquer"></button>
       </div>
       <div id="body-dest">
         <div class="row">
@@ -493,7 +527,7 @@ button.toggle {
     <div class="card" id="card-now">
       <div class="card-head">
         <h2>En cours</h2>
-        <button type="button" class="ghost toggle" data-toggle="now" aria-expanded="true">Masquer</button>
+        <button type="button" class="ghost toggle eye" data-toggle="now" aria-expanded="true" aria-label="Masquer" title="Masquer"></button>
       </div>
       <div id="body-now">
       <p class="now" id="now">Rien en lecture</p>
@@ -522,6 +556,7 @@ button.toggle {
         <div class="row">
           <input id="drurl" type="text" placeholder="Lien YouTube ou Google Drive (MP3 ou dossier)">
           <button id="dr" class="add">Ajouter</button>
+          <button id="dract" class="activity" hidden title="Préparer cette vidéo YouTube dans l'Activité « regarder ensemble »">🎬 Play activité</button>
         </div>
         
       
@@ -556,7 +591,7 @@ button.toggle {
 
                 <div class="row">
                   <button id="stplay" class="play">▶ Lancer</button>
-                  <button id="stshow" class="ghost">👁 Afficher la liste</button>
+                  <button id="stshow" class="ghost eye" aria-label="Afficher la liste" title="Afficher la liste"></button>
                   <button id="stdel" class="del">Supprimer</button>
                 </div>
 
@@ -630,6 +665,16 @@ button.toggle {
 
 <script>
 const $ = id => document.getElementById(id);
+
+// Icônes d'œil : ouvert = afficher, barré = masquer
+const EYE_ON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.94 17.94A10.9 10.9 0 0 1 12 19C5 19 1 12 1 12a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>';
+
+function setEye(btn, visible, label) {
+  btn.innerHTML = visible ? EYE_OFF : EYE_ON; // bouton = action possible
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+}
 let data = { guilds: [] };
 let sounds = { guildId: null, items: [] };
 let volTouched = 0; // dernier réglage du curseur (évite que le rafraîchissement le remette en place)
@@ -755,7 +800,7 @@ function renderStations(g, stations) {
 
   const open = showList && unlocked && unlocked.name === st.name;
   $('stitems').hidden = !open;
-  $('stshow').textContent = open ? '🙈 Masquer la liste' : '👁 Afficher la liste (' + st.count + ')';
+  setEye($('stshow'), open, open ? 'Masquer la liste' : 'Afficher la liste (' + st.count + ')');
 
   const sig = JSON.stringify(open ? unlocked.items : null);
   if ($('stitems').dataset.sig !== sig) {
@@ -957,6 +1002,31 @@ const stationNow = () => stationsNow().find(s => s.name === currentName) || null
 $('dr').onclick = () => act(async () => {
   const result = await api('/api/play', post({ ...ctx(), source: 'url', value: $('drurl').value }));
   $('drurl').value = '';
+  $('dract').hidden = true;
+  return result.message;
+});
+
+// Lien YouTube reconnu dans le champ ? (watch, youtu.be, shorts, embed, live)
+const isYoutube = value => {
+  try {
+    const u = new URL(String(value).trim());
+    const host = u.hostname.replace(/^(www|m|music)\./, '');
+    const id = host === 'youtu.be' ? u.pathname.split('/')[1]
+      : (host === 'youtube.com' || host === 'youtube-nocookie.com')
+        ? (u.pathname === '/watch' ? u.searchParams.get('v') : (u.pathname.match(/^\/(?:shorts|embed|live|v)\/([^/]+)/) || [])[1])
+        : null;
+    return /^[A-Za-z0-9_-]{11}$/.test(id || '');
+  } catch {
+    return false;
+  }
+};
+
+$('drurl').oninput = () => { $('dract').hidden = !isYoutube($('drurl').value); };
+
+$('dract').onclick = () => act(async () => {
+  const result = await api('/api/activity', post({ ...ctx(), url: $('drurl').value }));
+  $('drurl').value = '';
+  $('dract').hidden = true;
   return result.message;
 });
 
@@ -1184,7 +1254,7 @@ function setSection(key, open) {
   $('body-' + key).hidden = !open;
   $('card-' + key).classList.toggle('collapsed', !open);
   const btn = document.querySelector('[data-toggle="' + key + '"]');
-  btn.textContent = open ? 'Masquer' : 'Afficher';
+  setEye(btn, open, open ? 'Masquer' : 'Afficher');
   btn.setAttribute('aria-expanded', String(open));
   try { localStorage.setItem('mct-section-' + key, open ? '1' : '0'); } catch {}
 }
@@ -1204,9 +1274,9 @@ document.querySelectorAll('#app > .card').forEach(card => {
 
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'ghost toggle';
+  btn.className = 'ghost toggle eye';
   btn.dataset.toggle = key;
-  btn.textContent = 'Masquer';
+  setEye(btn, true, 'Masquer');
 
   const body = document.createElement('div');
   body.id = 'body-' + key;
