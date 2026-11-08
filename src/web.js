@@ -119,7 +119,7 @@ function startWeb(bot) {
 
       if (url.pathname === '/api/activity' && req.method === 'POST') {
         const { guildId, channelId, url: videoUrl } = await readJson(req);
-        return send(res, 200, { message: bot.watch(guildId, channelId, videoUrl, activity) });
+        return send(res, 200, await bot.watch(guildId, channelId, videoUrl, activity));
       }
 
       if (url.pathname === '/api/soundboard' && req.method === 'GET') {

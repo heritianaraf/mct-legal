@@ -19,6 +19,9 @@ const {
   TextInputBuilder,
   TextInputStyle,
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  InviteTargetType,
   ActivityType
 } = require('discord.js');
 
@@ -1203,10 +1206,10 @@ const botApi = {
     return guild?.voiceStates.cache.get(String(userId))?.channelId === String(channelId);
   },
 
-  // Dashboard « Play activité » : prépare la vidéo YouTube dans le salon vocal choisi.
-  // Discord n'autorise un bot à ouvrir une Activité que depuis une commande : la vidéo est donc
-  // téléchargée et mise en attente, puis lue dès que quelqu'un ouvre l'Activité (/regarder).
-  watch(guildId, channelId, rawUrl, activity) {
+  // Dashboard « Play activité » : la vidéo est préparée dans NOTRE Activité (elle démarre toute seule à
+  // l'ouverture, sans rien coller), puis on crée une invitation qui ouvre cette Activité dans le salon vocal.
+  // Si Discord refuse l'invitation, on poste un bouton « Ouvrir l'Activité » dans le chat du salon.
+  async watch(guildId, channelId, rawUrl, activity) {
     assertGuild(guildId);
 
     const channel = client.guilds.cache.get(String(guildId))?.channels.cache.get(String(channelId));
@@ -1216,7 +1219,44 @@ const botApi = {
     if (!id) throw new Error('Colle le lien d’une vidéo YouTube (youtube.com/watch?v=… ou youtu.be/…).');
 
     activity.setVideo(guildId, channel.id, id, 'Dashboard');
-    return `🎬 Vidéo en préparation pour « ${channel.name} ». Lance /regarder dans ce salon vocal pour ouvrir l’Activité.`;
+
+    try {
+      const invite = await channel.createInvite({
+        targetType: InviteTargetType?.EmbeddedApplication ?? 2,
+        targetApplication: client.application.id,
+        maxAge: 600,
+        maxUses: 0,
+        unique: true
+      });
+
+      return {
+        message: `🎬 Vidéo en préparation pour « ${channel.name} ». Clique sur le lien : l'Activité s'ouvre et la vidéo démarre toute seule.`,
+        link: invite.url
+      };
+    } catch (error) {
+      console.error('Invitation Activité refusée :', error.message);
+    }
+
+    try {
+      const title = await fetchYoutubeTitle(id);
+      const sent = await channel.send({
+        content: `🎬 **${title}** est prête. Clique sur le bouton pour ouvrir l’Activité dans ce salon vocal.`,
+        components: [
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId('watch-launch')
+              .setLabel('Ouvrir l’Activité')
+              .setEmoji('🎬')
+              .setStyle(ButtonStyle.Primary)
+          )
+        ]
+      });
+      setTimeout(() => sent.delete().catch(() => {}), 15 * 60 * 1000).unref?.();
+      return { message: `🎬 « ${title} » en préparation. Clique sur « Ouvrir l’Activité » dans le chat du salon « ${channel.name} » sur Discord.` };
+    } catch (error) {
+      console.error('Activité, message impossible :', error.message);
+      return { message: `🎬 Vidéo en préparation. Je n'ai pas pu poster le bouton dans « ${channel.name} » (permission « Envoyer des messages » ?) : lance /regarder à la place.` };
+    }
   },
 
   volume(guildId, level) {
@@ -2434,6 +2474,18 @@ client.on(Events.InteractionCreate, async interaction => {
     } else if (interaction.isRepliable()) {
       await interaction.reply({ content: message, flags: MessageFlags.Ephemeral }).catch(() => {});
     }
+  }
+});
+
+client.on(Events.InteractionCreate, async interaction => {
+  if (!interaction.isButton() || interaction.customId !== 'watch-launch') return;
+
+  try {
+    // Doit être la toute première réponse à l'interaction.
+    await interaction.launchActivity();
+  } catch (error) {
+    console.error('Erreur bouton Activité :', error);
+    await interaction.reply({ content: `❌ ${error.message}`, flags: MessageFlags.Ephemeral }).catch(() => {});
   }
 });
 

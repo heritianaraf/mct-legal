@@ -707,9 +707,23 @@ function show(on) {
   $('app').hidden = !on;
 }
 
+let msgLink = null; // lien d'invitation à afficher avec le prochain message
+
 function msg(text, isErr) {
   $('msg').textContent = text || '';
   $('msg').className = isErr ? 'err' : '';
+
+  if (msgLink && text) {
+    const a = document.createElement('a');
+    a.href = msgLink;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = ' ▶ Ouvrir l’Activité';
+    a.style.color = 'var(--ok)';
+    a.style.fontWeight = '600';
+    $('msg').append(a);
+  }
+  msgLink = null;
 }
 
 function fill(select, items) {
@@ -1024,7 +1038,10 @@ const isYoutube = value => {
 $('drurl').oninput = () => { $('dract').hidden = !isYoutube($('drurl').value); };
 
 $('dract').onclick = () => act(async () => {
-  const result = await api('/api/activity', post({ ...ctx(), url: $('drurl').value }));
+  const url = $('drurl').value;
+  const result = await api('/api/activity', post({ ...ctx(), url }));
+  msgLink = result.link || null;
+  if (msgLink) window.open(msgLink, '_blank', 'noopener');
   $('drurl').value = '';
   $('dract').hidden = true;
   return result.message;
