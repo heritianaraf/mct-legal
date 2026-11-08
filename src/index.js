@@ -68,10 +68,10 @@ const queues = new Map();
 fs.mkdirSync(MUSIC_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-// Vidéos téléchargées pour l'Activité « regarder ensemble » (nettoyées automatiquement)
-const WATCH_DIR = path.join(MUSIC_DIR, 'watch');
+// Vidéos temporaires de l'Activité « regarder ensemble » : directement dans le dossier temporaire
+// du système (aucun dossier créé), fichiers mctwatch-<id>.mp4, nettoyés automatiquement.
+const WATCH_DIR = require('node:os').tmpdir();
 const WATCH_MAX_MINUTES = Math.max(1, Number(process.env.WATCH_MAX_MINUTES) || 60);
-fs.mkdirSync(WATCH_DIR, { recursive: true });
 
 // ======================================
 // TÉLÉCHARGEMENT DES MP3 DISCORD
@@ -458,11 +458,11 @@ function runYtDlp(args, timeoutMs) {
   });
 }
 
-// Télécharge une vidéo YouTube en MP4 (H.264 + AAC, 720p max) dans WATCH_DIR : WATCH_DIR/<id>.mp4
+// Télécharge une vidéo YouTube en MP4 (H.264 + AAC, 720p max) : dossier temporaire/mctwatch-<id>.mp4
 async function downloadYoutubeVideo(id) {
   if (!/^[A-Za-z0-9_-]{11}$/.test(String(id || ''))) throw new Error('Lien YouTube invalide.');
 
-  const target = path.join(WATCH_DIR, `${id}.mp4`);
+  const target = path.join(WATCH_DIR, `mctwatch-${id}.mp4`);
   if (fs.existsSync(target)) return target;
 
   await ensureYtDlp();
@@ -474,7 +474,7 @@ async function downloadYoutubeVideo(id) {
     '--match-filter', `!is_live & duration<=${WATCH_MAX_MINUTES * 60}`,
     '--max-filesize', '400M',
     '--js-runtimes', 'node',
-    '-o', path.join(WATCH_DIR, `${id}.%(ext)s`)
+    '-o', path.join(WATCH_DIR, `mctwatch-${id}.%(ext)s`)
   ];
 
   if (ffmpegPath) args.push('--ffmpeg-location', ffmpegPath);
@@ -489,7 +489,7 @@ async function downloadYoutubeVideo(id) {
   const { code, output } = await runYtDlp(args, 10 * 60 * 1000);
 
   // Fichiers temporaires laissés par yt-dlp (flux séparés audio/vidéo)
-  const leftovers = (await fsp.readdir(WATCH_DIR)).filter(name => name.startsWith(`${id}.`) && name !== `${id}.mp4`);
+  const leftovers = (await fsp.readdir(WATCH_DIR)).filter(name => name.startsWith(`mctwatch-${id}.`) && name !== `mctwatch-${id}.mp4`);
   for (const name of leftovers) await fsp.unlink(path.join(WATCH_DIR, name)).catch(() => {});
 
   if (code === 'timeout') {

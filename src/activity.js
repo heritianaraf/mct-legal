@@ -23,9 +23,11 @@ const FILE_TTL_MS = 2 * 3600 * 1000;     // ... et pas plus de 2 h
 const MAX_POSITION = 24 * 3600;
 
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+const WATCH_FILE = /^mctwatch-([A-Za-z0-9_-]{11})\./;   // seuls ces fichiers sont gérés (le dossier temporaire est partagé)
+const watchName = id => `mctwatch-${id}.mp4`;
 const SNOWFLAKE = /^\d{5,25}$/;
 
-// bot doit fournir : videoDir, youtubeId(url), youtubeTitle(id), downloadVideo(id), userInVoice(guildId, channelId, userId)
+// bot doit fournir : videoDir (dossier existant ; fichiers mctwatch-<id>.mp4), youtubeId(url), youtubeTitle(id), downloadVideo(id), userInVoice(guildId, channelId, userId)
 // options.getUser(token) : remplaçable (tests) ; par défaut on interroge Discord.
 function createActivity(bot, { send, readJson, fail }, options = {}) {
   const rooms = new Map();       // "guildId:channelId" -> salon
@@ -92,16 +94,18 @@ function createActivity(bot, { send, readJson, fail }, options = {}) {
       const files = [];
 
       for (const name of await fsp.readdir(bot.videoDir)) {
+        const id = WATCH_FILE.exec(name)?.[1];
+        if (!id) continue;
+
         const full = path.join(bot.videoDir, name);
         const stat = await fsp.stat(full).catch(() => null);
-        if (stat?.isFile()) files.push({ name, full, mtime: stat.mtimeMs });
+        if (stat?.isFile()) files.push({ id, full, mtime: stat.mtimeMs });
       }
 
       files.sort((a, b) => b.mtime - a.mtime);
 
       for (const [index, file] of files.entries()) {
-        const id = file.name.split('.')[0];
-        if (active.has(id) || preparing.has(id)) continue;
+        if (active.has(file.id) || preparing.has(file.id)) continue;
 
         if (index >= MAX_FILES || now() - file.mtime > FILE_TTL_MS) {
           await fsp.unlink(file.full).catch(() => {});
@@ -114,7 +118,7 @@ function createActivity(bot, { send, readJson, fail }, options = {}) {
 
   // Télécharge la vidéo si elle n'est pas déjà sur le disque (un seul téléchargement par vidéo).
   function prepare(videoId) {
-    const file = path.join(bot.videoDir, `${videoId}.mp4`);
+    const file = path.join(bot.videoDir, watchName(videoId));
 
     if (fs.existsSync(file)) {
       const date = new Date();
@@ -236,7 +240,7 @@ function createActivity(bot, { send, readJson, fail }, options = {}) {
   // ----- HTTP -----
 
   function serveMedia(req, res, id) {
-    const file = path.join(bot.videoDir, `${id}.mp4`);
+    const file = path.join(bot.videoDir, watchName(id));
     let stat;
 
     try {
