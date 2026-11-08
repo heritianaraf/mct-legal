@@ -315,19 +315,21 @@ summary {
 }
 
 /* Menu glissant des playlists */
-.pl-nav {
+.pl-controls {
     display: flex;
-    align-items: stretch;
-    gap: 8px;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
 }
 
 .nav {
-    flex: 0 0 40px;
+    flex: 0 0 64px;
+    height: 44px;
     padding: 0;
-    font-size: 2.4rem;
+    font-size: 2rem;
     font-weight: 700;
     line-height: 1;
-    border-radius: 18px;
+    border-radius: 14px;
     background: rgba(255, 255, 255, .12);
 }
 
@@ -387,7 +389,9 @@ summary {
     display: flex;
     gap: 8px;
     justify-content: center;
-    margin-top: 12px;
+    flex: 1;
+    flex-wrap: wrap;
+    min-width: 0;
 }
 
 .dot {
@@ -542,7 +546,6 @@ button.toggle {
 
         <div id="stlist" class="stack">
           <div class="pl-nav">
-            <button id="plprev" class="ghost nav" aria-label="Playlist précédente" title="Playlist précédente">‹</button>
 
             <div class="pl-viewport" id="plview">
               <div class="pl-panel" id="plpanel">
@@ -580,10 +583,12 @@ button.toggle {
                 </div>
               </div>
             </div>
-
+          </div>
+          <div class="pl-controls">
+            <button id="plprev" class="ghost nav" aria-label="Playlist précédente" title="Playlist précédente">‹</button>
+            <div id="pldots" class="dots"></div>
             <button id="plnext" class="ghost nav" aria-label="Playlist suivante" title="Playlist suivante">›</button>
           </div>
-          <div id="pldots" class="dots"></div>
         </div>
 
         <button id="stopennew" class="add">➕ Ajouter une playlist</button>
