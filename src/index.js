@@ -68,6 +68,11 @@ const queues = new Map();
 fs.mkdirSync(MUSIC_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
+// Vidéos téléchargées pour l'Activité « regarder ensemble » (nettoyées automatiquement)
+const WATCH_DIR = path.join(MUSIC_DIR, 'watch');
+const WATCH_MAX_MINUTES = Math.max(1, Number(process.env.WATCH_MAX_MINUTES) || 60);
+fs.mkdirSync(WATCH_DIR, { recursive: true });
+
 // ======================================
 // TÉLÉCHARGEMENT DES MP3 DISCORD
 // ======================================
@@ -423,6 +428,85 @@ async function downloadYoutubeAudio(rawUrl) {
   }
 
   return path.join(UPLOAD_DIR, file);
+}
+
+// Lance yt-dlp et attend sa fin (utilisé pour les vidéos de l'Activité).
+function runYtDlp(args, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(YTDLP_PATH, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let text = '';
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, timeoutMs);
+
+    const collect = chunk => { text = (text + chunk).slice(-4000); };
+    child.stdout.on('data', collect);
+    child.stderr.on('data', collect);
+
+    child.on('error', error => {
+      clearTimeout(timer);
+      reject(new Error(`yt-dlp : ${error.message}`));
+    });
+
+    child.on('close', exitCode => {
+      clearTimeout(timer);
+      resolve({ code: timedOut ? 'timeout' : exitCode, output: text });
+    });
+  });
+}
+
+// Télécharge une vidéo YouTube en MP4 (H.264 + AAC, 720p max) dans WATCH_DIR : WATCH_DIR/<id>.mp4
+async function downloadYoutubeVideo(id) {
+  if (!/^[A-Za-z0-9_-]{11}$/.test(String(id || ''))) throw new Error('Lien YouTube invalide.');
+
+  const target = path.join(WATCH_DIR, `${id}.mp4`);
+  if (fs.existsSync(target)) return target;
+
+  await ensureYtDlp();
+
+  const args = [
+    '--no-playlist', '--no-warnings', '--no-progress',
+    '-f', 'bv*[vcodec^=avc1][height<=720]+ba[ext=m4a]/b[ext=mp4][height<=720]/b[ext=mp4]',
+    '--merge-output-format', 'mp4',
+    '--match-filter', `!is_live & duration<=${WATCH_MAX_MINUTES * 60}`,
+    '--max-filesize', '400M',
+    '--js-runtimes', 'node',
+    '-o', path.join(WATCH_DIR, `${id}.%(ext)s`)
+  ];
+
+  if (ffmpegPath) args.push('--ffmpeg-location', ffmpegPath);
+
+  if (process.env.YOUTUBE_COOKIES) {
+    fs.writeFileSync(YTDLP_COOKIES, process.env.YOUTUBE_COOKIES.replace(/\\n/g, '\n'), { mode: 0o600 });
+    args.push('--cookies', YTDLP_COOKIES);
+  }
+
+  args.push(youtubeUrlFor(id));
+
+  const { code, output } = await runYtDlp(args, 10 * 60 * 1000);
+
+  // Fichiers temporaires laissés par yt-dlp (flux séparés audio/vidéo)
+  const leftovers = (await fsp.readdir(WATCH_DIR)).filter(name => name.startsWith(`${id}.`) && name !== `${id}.mp4`);
+  for (const name of leftovers) await fsp.unlink(path.join(WATCH_DIR, name)).catch(() => {});
+
+  if (code === 'timeout') {
+    await fsp.unlink(target).catch(() => {});
+    throw new Error('Le téléchargement de la vidéo a expiré (plus de 10 minutes).');
+  }
+
+  if (code !== 0) {
+    await fsp.unlink(target).catch(() => {});
+    throw new Error(youtubeErrorMessage(output));
+  }
+
+  if (!fs.existsSync(target)) {
+    throw new Error(`vidéo ignorée (en direct, plus de ${WATCH_MAX_MINUTES} min ou trop volumineuse).`);
+  }
+
+  return target;
 }
 
 async function enqueueYoutube(state, rawUrl) {
@@ -1107,6 +1191,18 @@ function assertGuild(guildId) {
 }
 
 const botApi = {
+  // --- Activité « regarder ensemble » ---
+  videoDir: WATCH_DIR,
+  youtubeId: extractYoutubeId,
+  youtubeTitle: fetchYoutubeTitle,
+  downloadVideo: downloadYoutubeVideo,
+
+  // L'utilisateur est-il bien connecté à ce salon vocal ?
+  userInVoice(guildId, channelId, userId) {
+    const guild = client.guilds.cache.get(String(guildId));
+    return guild?.voiceStates.cache.get(String(userId))?.channelId === String(channelId);
+  },
+
   volume(guildId, level) {
     assertGuild(guildId);
     return `🔊 Volume : ${setVolume(guildId, level)}%`;
@@ -1391,7 +1487,7 @@ const botApi = {
   }
 };
 
-startWeb(botApi);
+const web = startWeb(botApi);
 
 // ======================================
 // COMMANDES DISCORD
@@ -2326,6 +2422,53 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 // ======================================
+// COMMANDE /regarder : ouvre l'Activité « regarder ensemble » dans le salon vocal
+// ======================================
+
+client.on(Events.InteractionCreate, async interaction => {
+  if (!interaction.isChatInputCommand() || interaction.commandName !== 'regarder') return;
+
+  try {
+    const voiceChannel = interaction.member?.voice?.channel;
+
+    if (!interaction.guildId || !voiceChannel) {
+      return await interaction.reply({
+        content: '❌ Rejoins un salon vocal avant de lancer l’Activité.',
+        flags: MessageFlags.Ephemeral
+      });
+    }
+
+    const rawUrl = interaction.options.getString('url');
+
+    if (rawUrl) {
+      const id = extractYoutubeId(rawUrl);
+
+      if (!id) {
+        return await interaction.reply({
+          content: '❌ Colle le lien d’une vidéo YouTube (youtube.com/watch?v=… ou youtu.be/…).',
+          flags: MessageFlags.Ephemeral
+        });
+      }
+
+      // Le téléchargement démarre tout de suite, pendant que l'Activité s'ouvre.
+      web.activity.setVideo(interaction.guildId, voiceChannel.id, id, interaction.user.username);
+    }
+
+    // Doit être la toute première réponse à la commande (pas de deferReply avant).
+    await interaction.launchActivity();
+  } catch (error) {
+    console.error('Erreur /regarder :', error);
+
+    const message = `❌ ${error.message}`;
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(message).catch(() => {});
+    } else {
+      await interaction.reply({ content: message, flags: MessageFlags.Ephemeral }).catch(() => {});
+    }
+  }
+});
+
+// ======================================
 // COMMANDE /soundboard
 // ======================================
 
@@ -2622,6 +2765,7 @@ client.once(Events.ClientReady, async readyClient => {
   console.log('✅ Playlists (/station) : YouTube, Google Drive et MP3');
   console.log('✅ Liens YouTube (yt-dlp téléchargé automatiquement)');
   console.log('✅ Soundboard du serveur (/soundboard)');
+  console.log('✅ Activité « regarder ensemble » (/regarder)');
   console.log('================================');
 });
 

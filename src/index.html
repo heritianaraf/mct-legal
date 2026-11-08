@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MCT MUSIC · Regarder ensemble</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111214;
+      --panel: #1e1f22;
+      --line: #2e3035;
+      --text: #f2f3f5;
+      --muted: #a3a6aa;
+      --accent: #5865f2;
+      --danger: #f23f43;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    form {
+      display: flex;
+      gap: 8px;
+      padding: 10px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+
+    input {
+      flex: 1;
+      min-width: 0;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font: inherit;
+    }
+
+    input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+    button {
+      padding: 9px 14px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button.ghost {
+      background: transparent;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-weight: 500;
+      padding: 5px 10px;
+    }
+
+    button:hover { filter: brightness(1.1); }
+
+    #stage {
+      position: relative;
+      flex: 1;
+      min-height: 0;
+      background: #000;
+    }
+
+    video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: #000;
+    }
+
+    #overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 24px;
+      background: rgba(17, 18, 20, 0.92);
+      text-align: center;
+    }
+
+    #overlay[hidden] { display: none; }
+    #overlay-text { max-width: 440px; color: var(--muted); font-size: 15px; }
+    #overlay-text.error { color: var(--danger); }
+
+    .spinner {
+      width: 28px;
+      height: 28px;
+      border: 3px solid var(--line);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+
+    .spinner[hidden] { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    footer {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      background: var(--panel);
+      border-top: 1px solid var(--line);
+      font-size: 13px;
+    }
+
+    #title {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 600;
+    }
+
+    #status { color: var(--muted); }
+    #status.error { color: var(--danger); }
+    #users { color: var(--muted); white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <form id="form" autocomplete="off">
+      <input id="url" type="text" placeholder="Colle un lien YouTube…" aria-label="Lien YouTube">
+      <button type="submit">Lire</button>
+    </form>
+
+    <div id="stage">
+      <video id="video" controls playsinline preload="auto"></video>
+      <div id="overlay">
+        <div id="spinner" class="spinner" hidden></div>
+        <div id="overlay-text"></div>
+        <button id="play" type="button" hidden>▶ Lancer la lecture</button>
+      </div>
+    </div>
+
+    <footer>
+      <span id="title"></span>
+      <span id="status"></span>
+      <span id="users"></span>
+      <button id="resync" class="ghost" type="button" title="Se recaler sur les autres spectateurs">Resynchroniser</button>
+    </footer>
+  </div>
+
+  <script>window.MCT = { clientId: "{{CLIENT_ID}}" };</script>
+  <script src="/activity/app.js"></script>
+</body>
+</html>

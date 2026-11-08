@@ -2,6 +2,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { createActivity } = require('./activity');
 
 function startWeb(bot) {
   const PORT = process.env.PORT || 10000;
@@ -58,10 +59,15 @@ function startWeb(bot) {
     req.on('error', reject);
   });
 
+  // Activité Discord « regarder ensemble » (sans mot de passe : Discord l'ouvre dans son iframe)
+  const activity = createActivity(bot, { send, readJson, fail });
+
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
 
     try {
+      if (await activity.handle(req, res, url)) return;
+
       if (req.method === 'GET' && url.pathname === '/') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
         return res.end(fs.readFileSync(path.join(__dirname, 'dashboard.html')));
@@ -198,9 +204,13 @@ function startWeb(bot) {
     }
   });
 
+  activity.attach(server);
+
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`MCT MUSIC interface web sur le port ${PORT}`);
   });
+
+  return { activity };
 }
 
 module.exports = { startWeb };

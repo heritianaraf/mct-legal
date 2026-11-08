@@ -179,6 +179,17 @@ const commands = [
             .setAutocomplete(true)
             .setRequired(true)
         )
+    ),
+
+  // REGARDER (Activité Discord)
+  new SlashCommandBuilder()
+    .setName('regarder')
+    .setDescription('Regarder une vidéo YouTube ensemble dans le salon vocal (Activité)')
+    .addStringOption(option =>
+      option
+        .setName('url')
+        .setDescription('Lien YouTube (facultatif : tu peux aussi le coller dans l’Activité)')
+        .setRequired(false)
     )
 
 ].map(command => command.toJSON());
@@ -215,6 +226,7 @@ async function main() {
   console.log('/station creer /ajouter /retirer /jouer /boucle /liste /supprimer');
   console.log('/pause /resume /stop');
   console.log('/skip /queue /volume /soundboard');
+  console.log('/regarder');
   console.log('================================');
 }
 
