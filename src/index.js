@@ -1206,6 +1206,9 @@ const botApi = {
     return guild?.voiceStates.cache.get(String(userId))?.channelId === String(channelId);
   },
 
+  // YouTube → MP3 : enregistre le lien (youtube.json), télécharge le MP3 puis le lance / l'ajoute à la file
+  addYoutube,
+
   // Dashboard « Play activité » : la vidéo est préparée dans NOTRE Activité (elle démarre toute seule à
   // l'ouverture, sans rien coller), puis on crée une invitation qui ouvre cette Activité dans le salon vocal.
   // Si Discord refuse l'invitation, on poste un bouton « Ouvrir l'Activité » dans le chat du salon.
@@ -2773,6 +2776,12 @@ async function restoreMissingFiles() {
     }
   }
 
+  for (const item of loadYoutubeList()) {
+    if (item.file && !fs.existsSync(path.join(PLAYLIST_DIR, path.basename(String(item.file))))) {
+      missing.add(String(item.file));
+    }
+  }
+
   if (!missing.size) return;
 
   let restored = 0;
@@ -2797,6 +2806,257 @@ async function deleteFileBackup(stored) {
       await channel.messages.delete(entry.id).catch(() => {});
     }
   } catch {}
+}
+
+// ======================================
+// YOUTUBE → MP3 : liens ajoutés depuis le dashboard
+// - youtube.json (liste des liens) est sauvegardé dans le salon de sauvegarde, comme stations.json
+// - chaque vidéo est convertie en MP3 (yt-dlp + ffmpeg, 192 kbit/s, comme le script Python d'origine)
+//   puis le MP3 est posté dans ce même salon (limite d'envoi de Discord : ~10 Mo sans boost du serveur)
+// ======================================
+
+const YOUTUBE_FILE = path.join(DATA_DIR, 'youtube.json');
+const YOUTUBE_BACKUP_NAME = 'youtube.json';
+const MAX_YOUTUBE_ITEMS = 500;
+let youtubeBackupTimer = null;
+let youtubeChain = Promise.resolve();   // un seul téléchargement à la fois
+const youtubeJobs = new Map();          // identifiant -> téléchargement en cours / en attente
+
+const youtubeStoredName = id => `yt-${id}.mp3`;
+
+function loadYoutubeList() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(YOUTUBE_FILE, 'utf8'));
+    return Array.isArray(raw.items) ? raw.items : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveYoutubeList(items) {
+  const tmp = `${YOUTUBE_FILE}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ items }, null, 2));
+  fs.renameSync(tmp, YOUTUBE_FILE);
+  scheduleYoutubeBackup();
+}
+
+function patchYoutubeItem(id, changes) {
+  const items = loadYoutubeList();
+  const item = items.find(entry => entry.id === id);
+  if (!item) return;
+  Object.assign(item, changes);
+  saveYoutubeList(items);
+}
+
+function scheduleYoutubeBackup() {
+  if (!BACKUP_CHANNEL_ID) return;
+  clearTimeout(youtubeBackupTimer);
+  youtubeBackupTimer = setTimeout(async () => {
+    try {
+      const channel = await backupChannel();
+      if (!channel || !fs.existsSync(YOUTUBE_FILE)) return;
+
+      const sent = await channel.send({
+        content: `💾 Sauvegarde des liens YouTube (${new Date().toISOString()})`,
+        files: [{ attachment: Buffer.from(fs.readFileSync(YOUTUBE_FILE)), name: YOUTUBE_BACKUP_NAME }]
+      });
+
+      for (const message of await botMessages(channel, 10)) {
+        if (message.id !== sent.id && message.attachments.some(a => a.name === YOUTUBE_BACKUP_NAME)) {
+          message.delete().catch(() => {});
+        }
+      }
+    } catch (error) {
+      console.error('Sauvegarde de youtube.json impossible :', error.message);
+    }
+  }, 5000);
+}
+
+// Au démarrage : si youtube.json est absent, on le récupère dans le salon de sauvegarde.
+async function restoreYoutubeBackup() {
+  try {
+    if (!BACKUP_CHANNEL_ID || fs.existsSync(YOUTUBE_FILE)) return;
+
+    const channel = await backupChannel();
+    if (!channel) return;
+
+    const message = (await botMessages(channel, 30))
+      .filter(m => m.attachments.some(a => a.name === YOUTUBE_BACKUP_NAME))
+      .sort((a, b) => b.createdTimestamp - a.createdTimestamp)[0];
+    if (!message) return;
+
+    const attachment = message.attachments.find(a => a.name === YOUTUBE_BACKUP_NAME);
+    const response = await fetch(attachment.url, { signal: AbortSignal.timeout(30000) });
+    if (!response.ok) throw new Error(`téléchargement ${response.status}`);
+
+    const text = await response.text();
+    JSON.parse(text); // vérifie que le fichier est valide
+    fs.writeFileSync(YOUTUBE_FILE, text);
+    console.log('✅ youtube.json restauré depuis le salon de sauvegarde.');
+  } catch (error) {
+    console.error('Restauration de youtube.json impossible :', error.message);
+  }
+}
+
+// Télécharge l'audio d'une vidéo YouTube en MP3 (192 kbit/s) dans PLAYLIST_DIR ; retourne le nom du fichier.
+async function downloadYoutubeMp3(id) {
+  const stored = youtubeStoredName(id);
+  const target = path.join(PLAYLIST_DIR, stored);
+
+  if (fs.existsSync(target)) return stored;
+
+  await ensureYtDlp();
+
+  const args = [
+    '--no-playlist', '--no-warnings', '--no-progress',
+    '-f', 'bestaudio/best',
+    '-x', '--audio-format', 'mp3', '--audio-quality', '192K',
+    '--match-filter', `!is_live & duration<=${YTDLP_MAX_SECONDS}`,
+    '--max-filesize', '150M',
+    '--js-runtimes', 'node',
+    '-o', path.join(PLAYLIST_DIR, `yt-${id}.%(ext)s`)
+  ];
+
+  if (ffmpegPath) args.push('--ffmpeg-location', ffmpegPath);
+
+  if (process.env.YOUTUBE_COOKIES) {
+    fs.writeFileSync(YTDLP_COOKIES, process.env.YOUTUBE_COOKIES.replace(/\\n/g, '\n'), { mode: 0o600 });
+    args.push('--cookies', YTDLP_COOKIES);
+  }
+
+  args.push(youtubeUrlFor(id));
+
+  const { code, output } = await runYtDlp(args, YTDLP_TIMEOUT_MS);
+
+  // fichiers intermédiaires laissés par yt-dlp (le .webm d'origine, etc.)
+  const leftovers = (await fsp.readdir(PLAYLIST_DIR)).filter(name => name.startsWith(`yt-${id}.`) && name !== stored);
+  for (const name of leftovers) await fsp.unlink(path.join(PLAYLIST_DIR, name)).catch(() => {});
+
+  if (code === 'timeout') {
+    await fsp.unlink(target).catch(() => {});
+    throw new Error('Le téléchargement YouTube a expiré (plus de 5 minutes).');
+  }
+
+  if (code !== 0) {
+    await fsp.unlink(target).catch(() => {});
+    throw new Error(youtubeErrorMessage(output));
+  }
+
+  if (!fs.existsSync(target)) {
+    throw new Error(`vidéo ignorée (en direct, plus de ${YTDLP_MAX_SECONDS / 3600} h ou trop volumineuse).`);
+  }
+
+  return stored;
+}
+
+// Ajoute le MP3 stocké dans la file du serveur : lecture immédiate si rien ne joue, sinon en file d'attente.
+async function enqueueStoredMp3(guildId, channelId, stored, title) {
+  const file = path.join(PLAYLIST_DIR, path.basename(stored));
+
+  return webEnqueue(guildId, channelId, async state => {
+    state.items.push({ name: title, file, ffmpeg: null, deleteOnFinish: false });
+    return `🎶 ${title} (MP3 YouTube) ${state.current ? 'ajouté à la file.' : 'lancé.'}`;
+  });
+}
+
+// Télécharge (ou récupère) le MP3 de la vidéo, le stocke dans le salon de sauvegarde et met à jour youtube.json.
+async function prepareYoutubeMp3(id) {
+  const known = loadYoutubeList().find(entry => entry.id === id);
+
+  // déjà téléchargé : on le réutilise (restauré depuis le salon de sauvegarde si besoin)
+  if (known?.status === 'ok' && known.file && await restoreStoredFile(known.file)) {
+    return { stored: known.file, title: known.title || 'Vidéo YouTube' };
+  }
+
+  patchYoutubeItem(id, { status: 'downloading', error: '' });
+
+  const title = await fetchYoutubeTitle(id);
+  patchYoutubeItem(id, { title });
+
+  const stored = await downloadYoutubeMp3(id);
+  const sent = await backupStoredFile(stored); // poste le MP3 dans le salon de sauvegarde
+
+  patchYoutubeItem(id, {
+    file: stored,
+    status: 'ok',
+    error: sent ? '' : 'MP3 gardé sur le serveur mais non envoyé dans le salon de sauvegarde (fichier trop lourd ou permission manquante).'
+  });
+
+  console.log(`✅ YouTube → MP3 : ${title}`);
+  return { stored, title };
+}
+
+// Un seul téléchargement à la fois ; plusieurs demandes pour la même vidéo partagent le même téléchargement.
+// `target` ({ guildId, channelId }) : si fourni, le MP3 est lancé / ajouté à la file une fois prêt.
+function runYoutubeJob(id, target = null) {
+  let job = youtubeJobs.get(id);
+
+  if (!job) {
+    job = {
+      targets: [],
+      promise: youtubeChain.then(async () => {
+        try {
+          return { ...(await prepareYoutubeMp3(id)), error: null };
+        } catch (error) {
+          console.error(`YouTube → MP3 impossible (${id}) :`, error.message);
+          patchYoutubeItem(id, { status: 'error', error: error.message });
+          return { error };
+        }
+      })
+    };
+
+    youtubeJobs.set(id, job);
+    youtubeChain = job.promise.finally(() => youtubeJobs.delete(id)).catch(() => {});
+  }
+
+  if (!target) return job.promise;
+
+  job.targets.push(target);
+
+  // chaque demande reçoit son propre résultat (lecture / file d'attente)
+  return job.promise.then(async result => {
+    if (!job.targets.includes(target)) return null;
+    job.targets.splice(job.targets.indexOf(target), 1);
+
+    if (!result.error) {
+      return enqueueStoredMp3(target.guildId, target.channelId, result.stored, result.title);
+    }
+
+    // MP3 impossible : on lit la vidéo en streaming plutôt que de ne rien jouer
+    const message = await webEnqueue(target.guildId, target.channelId, state => enqueueYoutube(state, youtubeUrlFor(id)));
+    return `${message}\n⚠️ MP3 non téléchargé (${result.error.message}), lecture en streaming.`;
+  });
+}
+
+// Dashboard : enregistre le lien dans youtube.json, télécharge le MP3 puis le lance ou l'ajoute à la file.
+// Retourne le message à afficher une fois le MP3 prêt.
+function addYoutube(guildId, channelId, rawUrl) {
+  const id = extractYoutubeId(rawUrl);
+  if (!id) throw new Error('Colle le lien d’une vidéo YouTube (youtube.com/watch?v=… ou youtu.be/…).');
+
+  const items = loadYoutubeList();
+
+  if (!items.some(entry => entry.id === id)) {
+    items.push({
+      id,
+      url: youtubeUrlFor(id),
+      title: '',
+      file: null,
+      status: 'pending',
+      error: '',
+      addedAt: new Date().toISOString()
+    });
+    saveYoutubeList(items.slice(-MAX_YOUTUBE_ITEMS));
+  }
+
+  return runYoutubeJob(id, { guildId, channelId });
+}
+
+// Au démarrage : reprend les téléchargements interrompus.
+function resumeYoutube() {
+  for (const item of loadYoutubeList()) {
+    if (item.status === 'pending' || item.status === 'downloading') runYoutubeJob(item.id).catch(() => {});
+  }
 }
 
 // ======================================
@@ -2833,13 +3093,16 @@ function updatePresence() {
 client.once(Events.ClientReady, async readyClient => {
   setInterval(updatePresence, 5000);
   await restoreBackup();
+  await restoreYoutubeBackup();
   await restoreMissingFiles();
+  resumeYoutube();
   console.log('================================');
   console.log(`🎵 MCT MUSIC connecté : ${readyClient.user.tag}`);
   console.log('✅ Lecture des MP3 joints aux commandes /play activée');
   console.log('✅ Lecture des MP3 et dossiers publics Google Drive activée');
   console.log('✅ Playlists (/station) : YouTube, Google Drive et MP3');
   console.log('✅ Liens YouTube (yt-dlp téléchargé automatiquement)');
+  console.log('✅ YouTube → MP3 (youtube.json + salon de sauvegarde)');
   console.log('✅ Soundboard du serveur (/soundboard)');
   console.log('✅ Activité « regarder ensemble » (/regarder)');
   console.log('================================');

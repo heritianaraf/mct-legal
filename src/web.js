@@ -114,6 +114,21 @@ function startWeb(bot) {
 
       if (url.pathname === '/api/play' && req.method === 'POST') {
         const { guildId, channelId, source, value, loop } = await readJson(req);
+        // Lien YouTube : on télécharge le MP3 (enregistré dans youtube.json), puis il est lancé ou ajouté à la file
+        if (source === 'url' && bot.youtubeId(value)) {
+          const job = bot.addYoutube(guildId, channelId, value);
+          job.catch(error => console.error('Ajout YouTube :', error.message)); // évite une erreur « non gérée » si la réponse part avant la fin
+
+          const waited = await Promise.race([
+            job,
+            new Promise(resolve => setTimeout(() => resolve(null), 45000))
+          ]);
+
+          return send(res, 200, {
+            message: waited || '⏳ Téléchargement du MP3 en cours : la musique sera lancée ou ajoutée à la file dès qu’elle est prête.'
+          });
+        }
+
         return send(res, 200, { message: await bot.play(guildId, channelId, source, value, loop) });
       }
 
