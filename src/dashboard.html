@@ -634,8 +634,8 @@ button.activity {
             <input id="stsrc" type="text" placeholder="Premier lien (facultatif)">
           </div>
           <div class="row">
-            <input id="stnewpw" type="password" placeholder="Mot de passe de la playlist (4 caractères min.)" autocomplete="new-password">
-            <input id="stnewpw2" type="password" placeholder="Confirmer le mot de passe" autocomplete="new-password">
+            <input id="stnewpw" type="password" placeholder="Mot de passe (facultatif, 4 caractères min.)" autocomplete="new-password">
+            <input id="stnewpw2" type="password" placeholder="Confirmer le mot de passe (si renseigné)" autocomplete="new-password">
           </div>
           <div class="row">
             <button id="stnew" class="add">Créer</button>
@@ -746,6 +746,11 @@ function removeItem(name, index) {
   });
 }
 
+function playItem(name, index) {
+  if (!unlocked || unlocked.name !== name) return;
+  act(async () => (await api('/api/station/play-item', post({ ...ctx(), name, index, password: unlocked.password }))).message);
+}
+
 function queueAction(index, name, action) {
   act(async () => (await api('/api/queue', post({ guildId: $('guild').value, index, name, action }))).message);
 }
@@ -822,6 +827,12 @@ function renderStations(g, stations) {
     $('stitems').replaceChildren(...(open ? unlocked.items : []).map((item, index) => {
       const li = document.createElement('li');
       li.append((icons[item.type] || '•') + ' ' + item.label);
+      const play = document.createElement('button');
+      play.className = 'ghost rm';
+      play.textContent = '▶';
+      play.title = 'Lancer ce morceau maintenant';
+      play.onclick = () => playItem(st.name, index);
+      li.append(play);
       const rm = document.createElement('button');
       rm.className = 'ghost rm';
       rm.textContent = '✕';

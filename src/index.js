@@ -1189,6 +1189,22 @@ async function webEnqueue(guildId, channelId, add) {
   }
 }
 
+// Lance tout de suite le morceau placé en tête de file (comme « lire maintenant » dans la file).
+function playNow(guildId, state) {
+  const current = state.current;
+
+  if (!current) {
+    startTrack(guildId);
+  } else if (((current.driveId || current.youtubeUrl) && !current.file) || state.player.state.status === AudioPlayerStatus.Idle) {
+    // morceau Drive/YouTube encore en téléchargement (ou lecteur au repos) : on l'abandonne
+    cleanupTrack(current);
+    state.current = null;
+    startTrack(guildId);
+  } else {
+    state.player.stop(true);
+  }
+}
+
 function assertGuild(guildId) {
   if (!client.guilds.cache.has(String(guildId))) throw new Error('Serveur introuvable.');
 }
@@ -1397,6 +1413,35 @@ const botApi = {
     return `✅ ${result.label} ajouté à ${station.name}.${result.info.includes('⚠️') ? ' ' + result.info : ''}`;
   },
 
+  // Lance tout de suite UN morceau d'une playlist (le reste de la file est conservé).
+  playStationItem(guildId, channelId, name, index, password) {
+    assertGuild(guildId);
+    const id = String(guildId);
+    const station = findStation(id, name);
+    if (!station) throw new Error('Playlist introuvable.');
+    assertStationPassword(station, password, 'web');
+
+    const position = Number(index);
+    const item = station.items[position];
+    if (!Number.isInteger(position) || !item) throw new Error('Morceau introuvable : la playlist a changé, réessaie.');
+
+    return webEnqueue(id, channelId, async state => {
+      const before = new Set(state.items);
+      const notes = [];
+
+      await enqueueStationItem(state, item, notes);
+
+      const added = state.items.filter(track => !before.has(track));
+      if (!added.length) throw new Error(notes[0] || 'Rien à lire.');
+
+      // les nouveaux morceaux passent en tête de file, dans l'ordre
+      for (const track of added) state.items.splice(state.items.indexOf(track), 1);
+      state.items.unshift(...added);
+
+      playNow(id, state);
+      return [`▶️ ${item.label || added[0].name} : lecture immédiate.`, ...notes.slice(0, 3)].join('\n');
+    });
+  },
   stationItems(guildId, name, password) {
     assertGuild(guildId);
     const station = findStation(String(guildId), name);
@@ -1487,18 +1532,7 @@ const botApi = {
       state.items.splice(position, 1);
       state.items.unshift(track);
 
-      const current = state.current;
-
-      if (!current) {
-        startTrack(id);
-      } else if ((current.driveId || current.youtubeUrl) && !current.file) {
-        // morceau Drive encore en téléchargement : on l'abandonne
-        cleanupTrack(current);
-        state.current = null;
-        startTrack(id);
-      } else {
-        state.player.stop(true);
-      }
+      playNow(id, state);
 
       return `▶️ ${track.name} : lecture immédiate.`;
     }
@@ -1797,7 +1831,7 @@ const ITEM_ICONS = { drive: '☁️', file: '🎵', youtube: '▶️' };
 fs.mkdirSync(PLAYLIST_DIR, { recursive: true });
 
 // ======================================
-// MOT DE PASSE DES PLAYLISTS (un par playlist, créé avec elle)
+// MOT DE PASSE DES PLAYLISTS (facultatif, un par playlist, créé avec elle)
 // ======================================
 
 const passwordFails = new Map();
@@ -1805,8 +1839,11 @@ const passwordFails = new Map();
 const hashPassword = (password, salt) => crypto.scryptSync(String(password), salt, 64);
 
 // Transforme un mot de passe en empreinte (jamais stocké en clair).
+// Mot de passe vide = playlist sans mot de passe (retourne null).
 function makePasswordRecord(password) {
   const value = String(password ?? '');
+
+  if (!value.trim()) return null;
 
   if (value.length < 4 || value.length > 100) {
     throw new Error('Le mot de passe de la playlist doit faire entre 4 et 100 caractères.');
@@ -1816,7 +1853,7 @@ function makePasswordRecord(password) {
   return { salt: salt.toString('hex'), hash: hashPassword(value, salt).toString('hex') };
 }
 
-// Vérifie le mot de passe d'une playlist (une ancienne playlist, sans mot de passe, n'en demande pas).
+// Vérifie le mot de passe d'une playlist (une playlist sans mot de passe n'en demande pas).
 function assertStationPassword(station, given, key) {
   const record = station?.password;
   if (!record) return;
@@ -2139,6 +2176,30 @@ async function saveTracksToStations(guildId, tracks, stationNames) {
   return { done, notes };
 }
 
+// Ajoute UN élément de playlist (Drive, YouTube ou fichier) à la file ; les problèmes vont dans `notes`.
+async function enqueueStationItem(state, item, notes) {
+  const label = item.label || item.type;
+
+  try {
+    if (item.type === 'drive') {
+      await enqueueDrive(state, item.value);
+    } else if (item.type === 'youtube') {
+      const id = extractYoutubeId(item.value);
+      if (!id) throw new Error('lien YouTube invalide.');
+      state.items.push({ name: label, youtubeUrl: youtubeUrlFor(id), file: null, ffmpeg: null, deleteOnFinish: true, deleteScheduled: false });
+    } else if (item.type === 'file') {
+      const file = path.join(PLAYLIST_DIR, path.basename(String(item.value)));
+      if (!fs.existsSync(file)) await restoreStoredFile(item.value);
+      if (!fs.existsSync(file)) throw new Error('fichier introuvable sur le serveur.');
+      state.items.push({ name: label, file, ffmpeg: null, deleteOnFinish: false });
+    } else {
+      notes.push(`⚠️ ${label} : ce type d’élément n’est plus pris en charge, retire-le de la playlist.`);
+    }
+  } catch (error) {
+    notes.push(`⚠️ ${label} : ${error.message}`);
+  }
+}
+
 async function enqueueStation(state, station) {
   if (!station.items.length) {
     throw new Error('Cette playlist est vide. Ajoute-lui des éléments.');
@@ -2148,26 +2209,7 @@ async function enqueueStation(state, station) {
   const notes = [];
 
   for (const item of station.items) {
-    const label = item.label || item.type;
-
-    try {
-      if (item.type === 'drive') {
-        await enqueueDrive(state, item.value);
-      } else if (item.type === 'youtube') {
-        const id = extractYoutubeId(item.value);
-        if (!id) throw new Error('lien YouTube invalide.');
-        state.items.push({ name: label, youtubeUrl: youtubeUrlFor(id), file: null, ffmpeg: null, deleteOnFinish: true, deleteScheduled: false });
-      } else if (item.type === 'file') {
-        const file = path.join(PLAYLIST_DIR, path.basename(String(item.value)));
-        if (!fs.existsSync(file)) await restoreStoredFile(item.value);
-        if (!fs.existsSync(file)) throw new Error('fichier introuvable sur le serveur.');
-        state.items.push({ name: label, file, ffmpeg: null, deleteOnFinish: false });
-      } else {
-        notes.push(`⚠️ ${label} : ce type d’élément n’est plus pris en charge, retire-le de la playlist.`);
-      }
-    } catch (error) {
-      notes.push(`⚠️ ${label} : ${error.message}`);
-    }
+    await enqueueStationItem(state, item, notes);
   }
 
   const added = state.items.filter(track => !before.has(track)).length;
@@ -2263,33 +2305,33 @@ client.on(Events.InteractionCreate, async interaction => {
     if (sub === 'creer') {
       const modal = new ModalBuilder()
         .setCustomId('station-create')
-        .setTitle('Créer une nouvelle station')
+        .setTitle('Créer une nouvelle playlist')
         .addComponents(
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('source')
-              .setLabel('Lien YouTube ou Google Drive')
+              .setLabel('Lien YouTube ou Google Drive (facultatif)')
               .setStyle(TextInputStyle.Paragraph)
               .setPlaceholder('Lien YouTube ou Google Drive (fichier ou dossier)')
-              .setRequired(true)
+              .setRequired(false)
               .setMaxLength(500)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('name')
-              .setLabel('Nom de la station (facultatif)')
+              .setLabel('Nom de la playlist (obligatoire sans lien)')
               .setStyle(TextInputStyle.Short)
-              .setPlaceholder('Nom de la station')
+              .setPlaceholder('Nom de la playlist')
               .setRequired(false)
               .setMaxLength(50)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('password')
-              .setLabel('Mot de passe de la playlist')
+              .setLabel('Mot de passe (facultatif)')
               .setStyle(TextInputStyle.Short)
-              .setPlaceholder('Il servira à la supprimer (4 caractères min.)')
-              .setRequired(true)
+              .setPlaceholder('Laisse vide pour une playlist sans mot de passe (4 caractères min.)')
+              .setRequired(false)
               .setMaxLength(100)
           ),
           new ActionRowBuilder().addComponents(
@@ -2297,7 +2339,7 @@ client.on(Events.InteractionCreate, async interaction => {
               .setCustomId('password2')
               .setLabel('Confirmer le mot de passe')
               .setStyle(TextInputStyle.Short)
-              .setRequired(true)
+              .setRequired(false)
               .setMaxLength(100)
           )
         );
@@ -2357,7 +2399,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const station = findStation(guildId, typed);
       if (!station) {
-        throw new Error('Playlist introuvable. Crée-la d’abord avec /station creer (mot de passe requis).');
+        throw new Error('Playlist introuvable. Crée-la d’abord avec /station creer.');
       }
 
       const result = attachment
@@ -2412,11 +2454,11 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ content: '❌ Playlist introuvable.', flags: MessageFlags.Ephemeral });
       }
 
-      // Ancienne playlist créée sans mot de passe : suppression directe.
+      // Playlist sans mot de passe : suppression directe.
       if (!station.password) {
         deleteStation(guildId, station.name);
         return interaction.reply({
-          content: `🗑️ Playlist **${station.name}** supprimée (elle n’avait pas de mot de passe).`,
+          content: `🗑️ Playlist **${station.name}** supprimée.`,
           flags: MessageFlags.Ephemeral
         });
       }

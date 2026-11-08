@@ -193,6 +193,11 @@ function startWeb(bot) {
         return send(res, 200, { items: bot.stationItems(guildId, name, password) });
       }
 
+      if (url.pathname === '/api/station/play-item' && req.method === 'POST') {
+        const { guildId, channelId, name, index, password } = await readJson(req);
+        return send(res, 200, { message: await bot.playStationItem(guildId, channelId, name, index, password) });
+      }
+
       if (url.pathname === '/api/station/add-current' && req.method === 'POST') {
         const { guildId, name, password } = await readJson(req);
         return send(res, 200, { message: await bot.saveCurrentToStation(guildId, name, password) });
