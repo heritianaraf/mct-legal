@@ -1220,6 +1220,8 @@ const botApi = {
 
     activity.setVideo(guildId, channel.id, id, 'Dashboard');
 
+    let inviteError = '';
+
     try {
       const invite = await channel.createInvite({
         targetType: InviteTargetType?.EmbeddedApplication ?? 2,
@@ -1234,7 +1236,8 @@ const botApi = {
         link: invite.url
       };
     } catch (error) {
-      console.error('Invitation Activité refusée :', error.message);
+      inviteError = `${error.code ? error.code + ' – ' : ''}${error.message}`;
+      console.error('Invitation Activité refusée :', error);
     }
 
     try {
@@ -1252,7 +1255,7 @@ const botApi = {
         ]
       });
       setTimeout(() => sent.delete().catch(() => {}), 15 * 60 * 1000).unref?.();
-      return { message: `🎬 « ${title} » en préparation. Clique sur « Ouvrir l’Activité » dans le chat du salon « ${channel.name} » sur Discord.` };
+      return { message: `🎬 « ${title} » en préparation. Clique sur « Ouvrir l’Activité » dans le chat du salon « ${channel.name} » sur Discord. (Invitation refusée : ${inviteError})` };
     } catch (error) {
       console.error('Activité, message impossible :', error.message);
       return { message: `🎬 Vidéo en préparation. Je n'ai pas pu poster le bouton dans « ${channel.name} » (permission « Envoyer des messages » ?) : lance /regarder à la place.` };
@@ -2480,12 +2483,17 @@ client.on(Events.InteractionCreate, async interaction => {
 client.on(Events.InteractionCreate, async interaction => {
   if (!interaction.isButton() || interaction.customId !== 'watch-launch') return;
 
+  console.log('Bouton « Ouvrir l’Activité » cliqué par', interaction.user.tag);
+
   try {
     // Doit être la toute première réponse à l'interaction.
     await interaction.launchActivity();
   } catch (error) {
     console.error('Erreur bouton Activité :', error);
-    await interaction.reply({ content: `❌ ${error.message}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+    await interaction.reply({
+      content: `❌ Discord a refusé d'ouvrir l'Activité depuis ce bouton (${error.message}). Lance plutôt la commande /regarder.`,
+      flags: MessageFlags.Ephemeral
+    }).catch(replyError => console.error('Réponse impossible :', replyError.message));
   }
 });
 
