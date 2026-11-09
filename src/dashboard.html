@@ -372,6 +372,106 @@ summary {
     margin: 4px 0 6px 28px;
 }
 
+
+/* Pages (onglets) */
+.tabs {
+    display: flex;
+    gap: 8px;
+    margin: 0 0 16px;
+}
+
+.tabs button {
+    flex: 1;
+    padding: 9px 14px;
+    background: rgba(255, 255, 255, .08);
+}
+
+.tabs button.on {
+    background: var(--pink);
+    border-color: transparent;
+    color: #fff;
+    box-shadow: 0 6px 22px rgba(255, 61, 154, .4);
+}
+
+#app[data-tab="player"] [data-page="playlists"],
+#app[data-tab="playlists"] [data-page="player"] {
+    display: none !important;
+}
+
+/* Version compacte des playlists */
+button.mini,
+label.file.mini {
+    padding: 7px 14px;
+    font-size: .8rem;
+}
+
+.compact {
+    padding: 14px;
+}
+
+.compact .card-head {
+    margin-bottom: 10px;
+}
+
+.compact .pl-controls {
+    margin: 0;
+    gap: 8px;
+}
+
+.compact .nav {
+    flex: 0 0 44px;
+    height: 32px;
+    font-size: 1.4rem;
+    border-radius: 12px;
+}
+
+.compact .pl-viewport {
+    border-radius: 16px;
+}
+
+.compact .pl-panel {
+    padding: 10px 12px;
+    gap: 8px;
+}
+
+.pl-line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.pl-info {
+    min-width: 0;
+}
+
+.compact .pl-name {
+    font-size: 1.05rem;
+}
+
+.compact .chk {
+    font-size: .8rem;
+    gap: 6px;
+    flex: none;
+}
+
+.compact .pl-actions {
+    gap: 8px;
+}
+
+.compact .pl-actions > button.mini {
+    flex: 1 1 90px;
+}
+
+.compact li {
+    padding: 4px 0;
+    font-size: .85rem;
+}
+
+.compact .empty {
+    margin: 0;
+}
+
 /* Menu glissant des playlists */
 .pl-controls {
     display: flex;
@@ -560,7 +660,7 @@ button.activity {
 
     </form>
 
-  <div id="app" hidden>
+  <div id="app" hidden data-tab="player">
     <img
     src="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"
     alt="MCT Music Player"
@@ -568,6 +668,11 @@ button.activity {
 >
     <h1>MCT<span>·</span>MUSIC</h1>
     <p class="sub">Pilote le bot depuis ton navigateur.</p>
+
+    <nav class="tabs" id="tabs" aria-label="Pages">
+      <button type="button" data-tab="player" class="on">🎵 Lecteur</button>
+      <button type="button" data-tab="playlists">📋 Playlists</button>
+    </nav>
 
     <div class="card" id="card-dest">
       <div class="card-head">
@@ -582,7 +687,7 @@ button.activity {
       </div>
     </div>
 
-    <div class="card" id="card-now">
+    <div class="card" id="card-now" data-page="player">
       <div class="card-head">
         <h2>En cours</h2>
         <button type="button" class="ghost toggle eye" data-toggle="now" aria-expanded="true" aria-label="Masquer" title="Masquer"></button>
@@ -615,7 +720,7 @@ button.activity {
 
     <p id="msg"></p>
 
-    <div class="card">
+    <div class="card" data-page="player">
       <h2>Ajouter une musique dans la file d'attente</h2>
       <div class="stack">
         
@@ -631,7 +736,7 @@ button.activity {
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" data-page="player">
       <h2>Soundboard du serveur</h2>
       <div class="row">
         <select id="sound" aria-label="Son"></select>
@@ -641,78 +746,80 @@ button.activity {
       <p id="snone" class="empty" hidden>Aucun son dans la table de mixage de ce serveur.</p>
     </div>
 
-    <div class="card">
-      <h2>Playlists</h2>
-      <div class="stack">
-        <p id="stempty" class="empty">Aucune playlist pour ce serveur.</p>
+    <div class="card compact" id="card-pl" data-page="playlists">
+      <div class="card-head">
+        <h2>Playlists</h2>
+        <button id="stopennew" class="add mini">＋ Nouvelle</button>
+      </div>
 
-        <div id="stlist" class="stack">
-          <div class="pl-nav">
+      <div id="stnewbox" class="stack" hidden>
+        <div class="row">
+          <input id="stname" type="text" placeholder="Nom de la playlist">
+          <input id="stsrc" type="text" placeholder="Premier lien (facultatif)">
+        </div>
+        <div class="row">
+          <input id="stnewpw" type="password" placeholder="Mot de passe (facultatif, 4 caractères min.)" autocomplete="new-password">
+          <input id="stnewpw2" type="password" placeholder="Confirmer le mot de passe (si renseigné)" autocomplete="new-password">
+        </div>
+        <div class="row">
+          <button id="stnew" class="add mini">Créer</button>
+          <button id="stnewno" class="ghost mini">Annuler</button>
+        </div>
+      </div>
 
-            <div class="pl-viewport" id="plview">
-              <div class="pl-panel" id="plpanel">
-                <div>
+      <p id="stempty" class="empty">Aucune playlist pour ce serveur.</p>
+
+      <div id="stlist" class="stack">
+        <div class="pl-controls">
+          <button id="plprev" class="ghost nav" aria-label="Playlist précédente" title="Playlist précédente">‹</button>
+          <div id="pldots" class="dots"></div>
+          <button id="plnext" class="ghost nav" aria-label="Playlist suivante" title="Playlist suivante">›</button>
+        </div>
+
+        <div class="pl-nav">
+          <div class="pl-viewport" id="plview">
+            <div class="pl-panel" id="plpanel">
+              <div class="pl-line">
+                <div class="pl-info">
                   <p class="pl-name" id="plname">—</p>
                   <p class="pl-meta" id="plmeta"></p>
                 </div>
+                <label class="chk" id="stloopl" title="Relancer la playlist en boucle"><input type="checkbox" id="stloop" checked> Boucle</label>
+              </div>
 
+              <div class="row pl-actions">
+                <button id="stplay" class="play mini">▶ Lancer</button>
+                <button id="stshow" class="ghost eye" aria-label="Afficher la liste" title="Afficher la liste"></button>
+                <button id="stdel" class="del mini">Supprimer</button>
+              </div>
+
+              <div class="stack" id="stpwbox" hidden>
+                <p class="pl-meta" id="stpwtitle"></p>
                 <div class="row">
-                  <button id="stplay" class="play">▶ Lancer</button>
-                  <button id="stshow" class="ghost eye" aria-label="Afficher la liste" title="Afficher la liste"></button>
-                  <button id="stdel" class="del">Supprimer</button>
-                </div>
-
-                <label class="chk" id="stloopl"><input type="checkbox" id="stloop" checked> Relancer la playlist en boucle</label>
-
-                <div class="stack" id="stpwbox" hidden>
-                  <p class="pl-meta" id="stpwtitle"></p>
-                  <div class="row">
-                    <input id="stpw" type="password" placeholder="Mot de passe de la playlist" autocomplete="off">
-                    <button id="stpwok" class="main">Valider</button>
-                    <button id="stpwno" class="ghost">Annuler</button>
-                  </div>
-                </div>
-
-                <ol id="stitems" hidden></ol>
-
-                <div id="stadd" class="stack">
-                  <button id="stcur" class="add">➕ Ajouter le morceau en cours</button>
-                  <div class="row">
-                    <input id="stlink" type="text" placeholder="Ajouter : lien YouTube ou Google Drive (MP3 ou dossier)">
-                    <button id="stlinkbtn" class="add">Ajouter</button>
-                  </div>
-                  <label class="file add">Ajouter des MP3 depuis mon PC ou TELEPHONE<input id="stfile" type="file" accept=".mp3,audio/mpeg" multiple></label>
+                  <input id="stpw" type="password" placeholder="Mot de passe de la playlist" autocomplete="off">
+                  <button id="stpwok" class="main mini">Valider</button>
+                  <button id="stpwno" class="ghost mini">Annuler</button>
                 </div>
               </div>
-            </div>
-          </div>
-          <div class="pl-controls">
-            <button id="plprev" class="ghost nav" aria-label="Playlist précédente" title="Playlist précédente">‹</button>
-            <div id="pldots" class="dots"></div>
-            <button id="plnext" class="ghost nav" aria-label="Playlist suivante" title="Playlist suivante">›</button>
-          </div>
-        </div>
 
-        <button id="stopennew" class="add">➕ Ajouter une playlist</button>
-        <div id="stnewbox" class="stack" hidden>
-          <h2 class="sep">Nouvelle playlist</h2>
-          <div class="row">
-            <input id="stname" type="text" placeholder="Nom de la playlist">
-            <input id="stsrc" type="text" placeholder="Premier lien (facultatif)">
-          </div>
-          <div class="row">
-            <input id="stnewpw" type="password" placeholder="Mot de passe (facultatif, 4 caractères min.)" autocomplete="new-password">
-            <input id="stnewpw2" type="password" placeholder="Confirmer le mot de passe (si renseigné)" autocomplete="new-password">
-          </div>
-          <div class="row">
-            <button id="stnew" class="add">Créer</button>
-            <button id="stnewno" class="ghost">Annuler</button>
+              <ol id="stitems" hidden></ol>
+
+              <button id="stopenadd" class="ghost mini" aria-expanded="false">➕ Ajouter des morceaux</button>
+              <div id="stadd" class="stack" hidden>
+                <button id="stcur" class="add mini">➕ Ajouter le morceau en cours</button>
+                <div class="row">
+                  <input id="stlink" type="text" placeholder="Lien YouTube ou Google Drive (MP3 ou dossier)">
+                  <button id="stlinkbtn" class="add mini">Ajouter</button>
+                </div>
+                <label class="file add mini">Ajouter des MP3 depuis mon PC ou TELEPHONE<input id="stfile" type="file" accept=".mp3,audio/mpeg" multiple></label>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" data-page="player">
       <h2>File d’attente</h2>
       <ol id="queue"></ol>
       <p id="qempty" class="empty">La file est vide.</p>
@@ -1676,6 +1783,29 @@ sectionKeys.forEach(key => {
   setSection(key, open);
   document.querySelector('[data-toggle="' + key + '"]').onclick = () => setSection(key, $('body-' + key).hidden);
 });
+
+// Page « Playlists » : section d'ajout repliée par défaut
+$('stopenadd').onclick = () => {
+  const open = $('stadd').hidden;
+  $('stadd').hidden = !open;
+  $('stopenadd').setAttribute('aria-expanded', String(open));
+  $('stopenadd').textContent = open ? '➖ Masquer l’ajout' : '➕ Ajouter des morceaux';
+};
+
+// Onglets Lecteur / Playlists (mémorisés dans le navigateur)
+function setTab(tab) {
+  $('app').dataset.tab = tab;
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  try { localStorage.setItem('mct-tab', tab); } catch {}
+}
+
+document.querySelectorAll('#tabs button').forEach(b => { b.onclick = () => setTab(b.dataset.tab); });
+
+{
+  let saved = 'player';
+  try { saved = localStorage.getItem('mct-tab') || 'player'; } catch {}
+  setTab(saved === 'playlists' ? 'playlists' : 'player');
+}
 
 setInterval(() => { if (!$('app').hidden) refresh(); }, 3000);
 
