@@ -426,6 +426,22 @@ summary {
     display: none !important;
 }
 
+/* Visiteur : lecture seule (ni précédent, pause, lecture, suivant, arrêt, ni volume) */
+#app[data-role="visiteur"] #prev,
+#app[data-role="visiteur"] #pause,
+#app[data-role="visiteur"] #resume,
+#app[data-role="visiteur"] #skip,
+#app[data-role="visiteur"] #stop,
+#app[data-role="visiteur"] #vol,
+#app[data-role="visiteur"] #voltxt {
+    display: none !important;
+}
+
+/* La barre de position reste visible, mais le visiteur ne peut pas avancer */
+#app[data-role="visiteur"] #seek {
+    pointer-events: none;
+}
+
 /* Version compacte des playlists */
 button.mini,
 label.file.mini {

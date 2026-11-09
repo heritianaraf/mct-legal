@@ -241,6 +241,10 @@ function startWeb(bot) {
       if (url.pathname === '/api/control' && req.method === 'POST') {
         const { guildId, action, value } = await readJson(req);
         if (action === 'output') allow('mct'); // couper / rétablir le son Discord
+        // Le visiteur ne pilote pas la lecture : ni pause, lecture, précédent, suivant, arrêt, avance rapide
+        if (role === 'visiteur' && ['pause', 'resume', 'previous', 'skip', 'stop', 'seek'].includes(action)) {
+          throw fail('Accès non autorisé avec ce mot de passe.', 403);
+        }
         await bot.control(playerOf(guildOf(guildId)), action, value);
         return send(res, 200, { ok: true });
       }

@@ -1,5 +1,5 @@
 // Dashboard ADMIN MCT (rouge / blanc / noir), servi par le serveur web de MCT MUSIC sous /admin.
-// Accès THIVALIN : un seul mot de passe (ADMIN_MCT_PASSWORD).
+// Accès ADMIN : un seul mot de passe (ADMIN_MCT_PASSWORD).
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -114,11 +114,11 @@ function createDashboard(getClient) {
 <title>${esc(title)} · ADMIN MCT</title><link rel="icon" type="image/png" href="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"><link rel="apple-touch-icon" href="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"><link rel="stylesheet" href="${BASE}/static/style.css?v=3"></head>
 <body><div class="app-shell">
 <aside class="sidebar">
-  <a class="brand" href="${BASE}/"><img class="brand-logo small" width="42" height="42" src="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png" alt="MCT"><span><b>ADMIN MCT</b><small>Espace THIVALIN</small></span></a>
+  <a class="brand" href="${BASE}/"><img class="brand-logo small" width="42" height="42" src="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png" alt="MCT"><span><b>ADMIN MCT</b><small>Espace ADMIN</small></span></a>
   <div class="nav-label">MENU PRINCIPAL</div>
   <a class="nav-item${active === 'home' ? ' active' : ''}" href="${BASE}/">▦ <span>Vue d'ensemble</span></a>
   <a class="nav-item${active === 'tickets' ? ' active' : ''}" href="${BASE}/tickets">▣ <span>Tickets &amp; recrutement</span></a>
-  <div class="sidebar-bottom"><span class="status-dot"></span> Accès THIVALIN · sécurisé</div>
+  <div class="sidebar-bottom"><span class="status-dot"></span> Accès ADMIN · sécurisé</div>
 </aside>
 <main class="main-content">
   <header class="topbar"><div><p class="eyebrow">ESPACE ADMINISTRATION</p><h1>${esc(heading)}</h1><p class="muted">${esc(sub)}</p></div>
@@ -141,10 +141,10 @@ function createDashboard(getClient) {
 <title>Connexion · ADMIN MCT</title><link rel="icon" type="image/png" href="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"><link rel="apple-touch-icon" href="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"><link rel="stylesheet" href="${BASE}/static/style.css?v=3"></head>
 <body class="login-body"><main class="login-card">
   <img class="brand-logo" width="96" height="96" src="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png" alt="MCT"><p class="eyebrow">MADAGASCAR COMMUNITY TEAM</p>
-  <h1>ADMIN MCT</h1><p class="muted">Accès réservé à THIVALIN.</p>
+  <h1>ADMIN MCT</h1><p class="muted">Accès réservé à ADMIN.</p>
   ${message ? `<div class="flash error">${esc(message)}</div>` : ''}
   <form method="post" action="${BASE}/login">
-    <label for="password">Mot de passe THIVALIN</label>
+    <label for="password">Mot de passe ADMIN</label>
     <input id="password" type="password" name="password" required autocomplete="current-password">
     <button class="button primary full" type="submit">Se connecter</button>
   </form>
