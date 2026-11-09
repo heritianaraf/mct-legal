@@ -303,6 +303,64 @@ input[type="file"] {
     accent-color: #ff4fa3;
 }
 
+.ctl {
+    justify-content: center;
+}
+
+.ctl > button {
+    flex: 0 0 auto;
+    width: 52px;
+    height: 52px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+}
+
+.ctl > button[hidden] {
+    display: none;
+}
+
+.ctl > button.on {
+    background: var(--pink);
+    color: #fff;
+}
+
+.ic {
+    width: 22px;
+    height: 22px;
+}
+
+.ic.fill {
+    fill: currentColor;
+}
+
+.ic.stk {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+#spectrum {
+    display: block;
+    width: 100%;
+    height: 90px;
+    margin-top: 16px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, .04);
+}
+
+.seek span {
+    min-width: 3.2em;
+    font-variant-numeric: tabular-nums;
+}
+
+.seek span:last-child {
+    text-align: right;
+}
+
 summary {
     cursor: pointer;
     color: var(--mut);
@@ -531,14 +589,22 @@ button.activity {
       </div>
       <div id="body-now">
       <p class="now" id="now">Rien en lecture</p>
-      <div class="row">
-        <button id="prev" class="ghost">⏮ Précédent</button>
-        <button id="pause" class="ghost">⏸ Pause</button>
-        <button id="resume" class="ghost">▶ Reprendre</button>
-        <button id="skip" class="ghost">⏭ Suivant</button>
-        <button id="stop" class="ghost">⏹ Arrêter</button>
-        <button id="loop" class="ghost" hidden>🔁 Boucle</button>
+      <div class="row ctl">
+        <button id="prev" class="ghost" title="Précédent" aria-label="Précédent"><svg class="ic fill" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2.5v14H6zM20 5v14L9.5 12z"/></svg></button>
+        <button id="pause" class="ghost" title="Pause" aria-label="Pause"><svg class="ic fill" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg></button>
+        <button id="resume" class="ghost" hidden title="Reprendre" aria-label="Reprendre"><svg class="ic fill" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16l13-8z"/></svg></button>
+        <button id="skip" class="ghost" title="Suivant" aria-label="Suivant"><svg class="ic fill" viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 5H18v14h-2.5zM4 5v14l10.5-7z"/></svg></button>
+        <button id="stop" class="ghost" title="Arrêter" aria-label="Arrêter"><svg class="ic fill" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg></button>
+        <button id="loop" class="ghost" hidden title="Boucle de la playlist" aria-label="Boucle de la playlist"><svg class="ic stk" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></svg></button>
+        <button id="repeat" class="ghost" hidden title="Répéter le morceau" aria-label="Répéter le morceau"><svg class="ic stk" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/><path d="M11 10.5l1.5-1V15"/></svg></button>
+        <button id="listen" class="ghost" title="Écouter sur cet appareil (en plus du salon vocal)" aria-label="Écouter sur cet appareil (en plus du salon vocal)"><svg class="ic stk" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg></button>
       </div>
+      <div class="vol seek">
+        <span id="pos">0:00</span>
+        <input id="seek" type="range" min="0" max="0" step="1" value="0" aria-label="Position dans le morceau" disabled>
+        <span id="dur">--:--</span>
+      </div>
+      <canvas id="spectrum" aria-label="Spectre audio"></canvas>
       <div class="vol">
         <span id="voltxt">🔊 100%</span>
         <input id="vol" type="range" min="0" max="200" step="5" value="100" aria-label="Volume">
@@ -894,7 +960,24 @@ function render() {
   $('prev').disabled = !g?.canPrevious;
 
   $('loop').hidden = !g?.station;
-  $('loop').textContent = g?.loop ? '🔁 Boucle activée' : '🔁 Boucle désactivée';
+  $('loop').classList.toggle('on', Boolean(g?.loop));
+  $('loop').title = g?.loop ? 'Boucle de la playlist : activée' : 'Boucle de la playlist : désactivée';
+
+  $('pause').hidden = Boolean(g?.paused);
+  $('resume').hidden = !g?.paused;
+
+  $('repeat').hidden = !g?.current;
+  $('repeat').classList.toggle('on', Boolean(g?.loopTrack));
+  $('repeat').title = g?.loopTrack ? 'Répétition du morceau : activée' : 'Répéter le morceau';
+
+  playback = {
+    pos: g?.position ?? 0,
+    duration: g?.duration ?? 0,
+    at: Date.now(),
+    running: Boolean(g?.current) && !g?.paused,
+    seekable: Boolean(g?.seekable)
+  };
+  tick();
 
   const queue = g?.queue || [];
   const keys = new Set(queue.map((name, index) => index + '|' + name));
@@ -1239,6 +1322,199 @@ $('qsavebtn').onclick = () => act(async () => {
   return result.message;
 });
 
+// ----- Position dans le morceau (affichage fluide entre deux rafraîchissements) -----
+let playback = { pos: 0, duration: 0, at: 0, running: false, seekable: false };
+let seeking = false;
+let seekTouched = 0;
+
+const fmtTime = value => {
+  const total = Math.max(0, Math.floor(Number(value) || 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = String(total % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+};
+
+function tick() {
+  const duration = playback.duration;
+  let pos = playback.pos + (playback.running ? (Date.now() - playback.at) / 1000 : 0);
+  if (duration) pos = Math.min(pos, duration);
+
+  if (String($('seek').max) !== String(Math.floor(duration))) $('seek').max = Math.floor(duration);
+  $('seek').disabled = !playback.seekable;
+  $('dur').textContent = duration ? fmtTime(duration) : '--:--';
+
+  const dragging = seeking && Date.now() - seekTouched < 10000;
+  if (!dragging) {
+    seeking = false;
+    $('seek').value = pos;
+    $('pos').textContent = fmtTime(pos);
+  }
+}
+
+setInterval(tick, 500);
+
+$('seek').oninput = () => {
+  seeking = true;
+  seekTouched = Date.now();
+  $('pos').textContent = fmtTime($('seek').value);
+};
+
+$('seek').onchange = async () => {
+  const seconds = Number($('seek').value);
+  seeking = false;
+  playback.pos = seconds;
+  playback.at = Date.now();
+  playback.running = true;
+
+  try {
+    await api('/api/control', post({ guildId: $('guild').value, action: 'seek', value: seconds }));
+    msg('');
+  } catch (error) {
+    msg(error.message, true);
+  }
+  refresh();
+};
+
+// ----- Spectre audio / équaliseur -----
+const canvas = $('spectrum');
+const cx = canvas.getContext('2d');
+const BARS = 32;
+let target = new Array(BARS).fill(0);
+const bars = new Array(BARS).fill(0);
+const caps = new Array(BARS).fill(0);
+let spectrumBusy = false;
+
+async function pollSpectrum() {
+  if (spectrumBusy || document.hidden || $('app').hidden) return;
+
+  if (!playback.running || !$('guild').value) {
+    target = new Array(BARS).fill(0);
+    return;
+  }
+
+  spectrumBusy = true;
+  try {
+    const result = await api('/api/spectrum?guildId=' + encodeURIComponent($('guild').value));
+    target = result.bands ? result.bands.map(v => v / 255) : new Array(BARS).fill(0);
+  } catch {
+    target = new Array(BARS).fill(0);
+  }
+  spectrumBusy = false;
+}
+
+setInterval(pollSpectrum, 100);
+
+function drawSpectrum() {
+  const ratio = window.devicePixelRatio || 1;
+  const w = Math.round(canvas.clientWidth * ratio);
+  const h = Math.round(canvas.clientHeight * ratio);
+
+  if (w && h) {
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+
+    cx.clearRect(0, 0, w, h);
+
+    const gap = 3 * ratio;
+    const barW = (w - gap * (BARS + 1)) / BARS;
+    const gradient = cx.createLinearGradient(0, h, 0, 0);
+    gradient.addColorStop(0, '#8b5cf6');
+    gradient.addColorStop(1, '#ff4fa3');
+
+    for (let i = 0; i < BARS; i++) {
+      // montée rapide, descente douce
+      bars[i] = target[i] > bars[i] ? bars[i] + (target[i] - bars[i]) * 0.6 : bars[i] * 0.86;
+      caps[i] = Math.max(bars[i], caps[i] - 0.012);
+
+      const x = gap + i * (barW + gap);
+      const barH = Math.max(2 * ratio, bars[i] * (h - 6 * ratio));
+
+      cx.fillStyle = gradient;
+      cx.fillRect(x, h - barH, barW, barH);
+
+      cx.fillStyle = 'rgba(255, 255, 255, .75)';
+      cx.fillRect(x, h - caps[i] * (h - 6 * ratio) - 4 * ratio, barW, 2 * ratio);
+    }
+  }
+
+  requestAnimationFrame(drawSpectrum);
+}
+
+requestAnimationFrame(drawSpectrum);
+
+// ----- Répéter le morceau en cours -----
+$('repeat').onclick = () => {
+  const g = data.guilds.find(x => x.id === $('guild').value);
+  act(async () => {
+    await api('/api/control', post({ guildId: $('guild').value, action: g?.loopTrack ? 'repeat-off' : 'repeat-on' }));
+  });
+};
+
+// ----- Écouter sur cet appareil (flux MP3 en direct) -----
+let listening = false;
+let listenAudio = null;
+let listenTimer = null;
+
+function dropAudio(audio) {
+  if (!audio) return;
+  audio.onerror = audio.onended = null;
+  audio.pause();
+  audio.removeAttribute('src');
+  audio.load(); // ferme la connexion au serveur
+}
+
+function setListenButton() {
+  $('listen').classList.toggle('on', listening);
+  $('listen').title = listening ? 'Arrêter l’écoute sur cet appareil' : 'Écouter sur cet appareil (en plus du salon vocal)';
+}
+
+function openStream() {
+  dropAudio(listenAudio);
+  clearTimeout(listenTimer);
+
+  const audio = new Audio('/api/listen?guildId=' + encodeURIComponent($('guild').value) + '&t=' + Date.now());
+  listenAudio = audio;
+
+  // Flux interrompu (réseau, proxy…) : on se reconnecte tout seul tant que l'écoute est activée.
+  const retry = () => {
+    if (!listening || listenAudio !== audio) return;
+    clearTimeout(listenTimer);
+    listenTimer = setTimeout(() => { if (listening && listenAudio === audio) openStream(); }, 1500);
+  };
+  audio.onerror = retry;
+  audio.onended = retry;
+
+  audio.play().catch(error => {
+    if (error.name === 'NotAllowedError') {
+      stopListening();
+      msg('Le navigateur a bloqué la lecture : clique de nouveau sur « Écouter ici ».', true);
+    } else {
+      retry();
+    }
+  });
+}
+
+function stopListening() {
+  listening = false;
+  clearTimeout(listenTimer);
+  dropAudio(listenAudio);
+  listenAudio = null;
+  setListenButton();
+}
+
+$('listen').onclick = () => {
+  if (listening) return stopListening();
+  if (!$('guild').value) return msg('Choisis d’abord un serveur.', true);
+
+  listening = true;
+  setListenButton();
+  openStream();
+  msg('🎧 Écoute sur cet appareil activée (quelques secondes de décalage avec Discord).');
+};
+
 $('loop').onclick = () => {
   const g = data.guilds.find(x => x.id === $('guild').value);
   act(async () => {
@@ -1268,7 +1544,7 @@ $('vol').onchange = async () => {
   }
 };
 
-$('guild').onchange = () => { volTouched = 0; render(); };
+$('guild').onchange = () => { volTouched = 0; render(); if (listening) openStream(); };
 
 $('login').onsubmit = async event => {
   event.preventDefault();

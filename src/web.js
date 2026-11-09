@@ -108,6 +108,15 @@ function startWeb(bot) {
 
       if (!isAuthed(req)) throw fail('Non connecté.', 401);
 
+      if (url.pathname === '/api/spectrum' && req.method === 'GET') {
+        return send(res, 200, bot.spectrum(url.searchParams.get('guildId')));
+      }
+
+      // Écoute dans le navigateur : flux MP3 en direct (la réponse reste ouverte)
+      if (url.pathname === '/api/listen' && req.method === 'GET') {
+        return bot.listen(url.searchParams.get('guildId'), req, res);
+      }
+
       if (url.pathname === '/api/state' && req.method === 'GET') {
         return send(res, 200, { guilds: bot.getState() });
       }
@@ -153,8 +162,8 @@ function startWeb(bot) {
       }
 
       if (url.pathname === '/api/control' && req.method === 'POST') {
-        const { guildId, action } = await readJson(req);
-        await bot.control(guildId, action);
+        const { guildId, action, value } = await readJson(req);
+        await bot.control(guildId, action, value);
         return send(res, 200, { ok: true });
       }
 

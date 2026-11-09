@@ -7,7 +7,7 @@ const { spawn } = require('node:child_process');
 const ffmpegPath = require('ffmpeg-static');
 const crypto = require('node:crypto');
 const { randomUUID } = crypto;
-const { Readable } = require('node:stream');
+const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 
 const {
@@ -26,6 +26,7 @@ const {
 } = require('discord.js');
 
 const { startWeb } = require('./web');
+const { Analyzer } = require('./spectrum');
 
 const {
   joinVoiceChannel,
@@ -690,7 +691,7 @@ const HISTORY_MAX = 5;
 
 // Les MP3 envoyés sont supprimés après lecture : on en garde un lien (.keep) pour pouvoir les rejouer.
 function keepCopy(track) {
-  if (!track.deleteOnFinish || track.driveId || track.youtubeUrl || !track.file) return;
+  if (!track.deleteOnFinish || track.driveId || track.youtubeUrl || !track.file || track.keepFile) return;
 
   const keep = `${track.file}.${Date.now()}.keep`;
   try {
@@ -813,10 +814,29 @@ function createMusicState(guildId, textChannel) {
     lastRefill: 0,
     looping: false,
     history: [],
-    goingBack: false
+    goingBack: false,
+    loopTrack: false,   // répéter le morceau en cours
+    forceNext: false    // arrêt volontaire (suivant, précédent…) : pas de répétition
   };
 
   player.on(AudioPlayerStatus.Idle, () => {
+    const forced = state.forceNext;
+    state.forceNext = false;
+
+    // Répétition du morceau : on relance le même fichier (sauf si on a demandé de passer au suivant)
+    if (state.current && state.loopTrack && !forced && queues.get(guildId) === state) {
+      const track = state.current;
+
+      if (track.file && fs.existsSync(track.file) && Date.now() - (track.startedAt || 0) > 1000) {
+        playTrack(guildId, state, track, 0, true);
+        return;
+      }
+
+      state.textChannel?.send('🔂 Répétition arrêtée : ce morceau ne peut pas être relu.').catch(() => {});
+    }
+
+    state.loopTrack = false;
+
     if (state.current) {
       const remember = !state.goingBack;
       state.goingBack = false;
@@ -831,6 +851,7 @@ function createMusicState(guildId, textChannel) {
 
   player.on('error', error => {
     console.error('Erreur audio :', error);
+    state.loopTrack = false;
 
     if (state.current) {
       dropKeep(state.current);
@@ -931,30 +952,159 @@ async function refillLoop(guildId, state) {
   startTrack(guildId);
 }
 
-function playTrack(guildId, state, track) {
-  keepCopy(track);
+// Durée d'un fichier audio (lue avec ffmpeg, sans ffprobe) : secondes ou null.
+function probeDuration(file) {
+  return new Promise(resolve => {
+    let text = '';
+    let child;
 
-  const ffmpeg = spawn(ffmpegPath || 'ffmpeg', [
-    '-hide_banner',
-    '-loglevel', 'error',
-    '-i', track.file,
-    '-vn',
-    '-f', 's16le',
-    '-ar', '48000',
-    '-ac', '2',
-    'pipe:1'
-  ], {
+    try {
+      child = spawn(ffmpegPath || 'ffmpeg', ['-hide_banner', '-i', file], {
+        windowsHide: true,
+        stdio: ['ignore', 'ignore', 'pipe']
+      });
+    } catch {
+      return resolve(null);
+    }
+
+    const timer = setTimeout(() => child.kill(), 10000);
+    child.stderr.on('data', chunk => { if (text.length < 8000) text += chunk; });
+    child.on('error', () => { clearTimeout(timer); resolve(null); });
+    child.on('close', () => {
+      clearTimeout(timer);
+      const m = text.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+      const seconds = m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : null;
+      resolve(seconds && Number.isFinite(seconds) ? seconds : null);
+    });
+  });
+}
+
+// ======================================
+// ÉCOUTE DANS LE NAVIGATEUR (flux MP3 en direct du morceau en cours)
+// Le PCM envoyé à Discord est copié vers un encodeur MP3, uniquement si quelqu'un écoute.
+// ======================================
+
+const hubs = new Map(); // guildId -> { listeners:Set<res>, encoder, lastPcm, timer }
+const MAX_LISTENERS = 10;
+const SILENCE = Buffer.alloc(48000 * 2 * 2 / 10); // 100 ms de silence (s16le 48 kHz stéréo)
+
+function hubFor(guildId) {
+  const id = String(guildId);
+  let hub = hubs.get(id);
+  if (!hub) {
+    hub = { listeners: new Set(), encoder: null, lastPcm: 0, timer: null };
+    hubs.set(id, hub);
+  }
+  return hub;
+}
+
+function startEncoder(hub) {
+  if (hub.encoder || !hub.listeners.size) return;
+
+  const encoder = spawn(ffmpegPath || 'ffmpeg', [
+    '-hide_banner', '-loglevel', 'error',
+    '-fflags', 'nobuffer', '-probesize', '32', '-analyzeduration', '0',
+    '-f', 's16le', '-ar', '48000', '-ac', '2', '-i', 'pipe:0',
+    '-vn', '-c:a', 'libmp3lame', '-b:a', '128k',
+    '-write_xing', '0', '-write_id3v2', '0', '-flush_packets', '1',
+    '-f', 'mp3', 'pipe:1'
+  ], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+
+  encoder.stdin.on('error', () => {});
+  encoder.stdout.on('data', chunk => {
+    for (const res of hub.listeners) {
+      if (!res.writableNeedDrain) res.write(chunk); // client trop lent : on saute ce morceau de flux
+    }
+  });
+  encoder.on('error', () => { if (hub.encoder === encoder) hub.encoder = null; });
+  encoder.on('close', () => { if (hub.encoder === encoder) hub.encoder = null; });
+
+  hub.encoder = encoder;
+  hub.lastPcm = Date.now();
+
+  // Pendant une pause ou entre deux morceaux, on envoie du silence pour garder le flux ouvert.
+  clearInterval(hub.timer);
+  hub.timer = setInterval(() => {
+    if (hub.encoder === encoder && Date.now() - hub.lastPcm > 500 && encoder.stdin.writable && !encoder.stdin.writableNeedDrain) {
+      encoder.stdin.write(SILENCE);
+    }
+  }, 100);
+  hub.timer.unref?.();
+}
+
+function stopEncoder(hub) {
+  clearInterval(hub.timer);
+  hub.timer = null;
+
+  const encoder = hub.encoder;
+  hub.encoder = null;
+  if (encoder) {
+    encoder.stdin.destroy();
+    encoder.kill();
+  }
+}
+
+// Copie chaque bloc de PCM vers l'encodeur (si des auditeurs sont connectés) puis le laisse passer vers Discord.
+function makeTap(guildId) {
+  const hub = hubFor(guildId);
+  const analyzer = new Analyzer();
+
+  const tap = new Transform({
+    transform(chunk, _encoding, callback) {
+      analyzer.push(chunk);
+
+      if (hub.listeners.size) {
+        if (!hub.encoder) startEncoder(hub);
+        const encoder = hub.encoder;
+        if (encoder && encoder.stdin.writable && !encoder.stdin.writableNeedDrain) {
+          encoder.stdin.write(chunk);
+          hub.lastPcm = Date.now();
+        }
+      }
+      callback(null, chunk);
+    }
+  });
+
+  tap.analyzer = analyzer;
+  return tap;
+}
+
+// Démarre (ou relance) la lecture d'un morceau. `offset` = position de départ en secondes.
+function playTrack(guildId, state, track, offset = 0, silent = false) {
+  if (!offset) {
+    keepCopy(track);
+    track.startedAt = Date.now();
+  }
+
+  track.offset = offset;
+
+  if (track.duration === undefined) {
+    track.duration = null;
+    probeDuration(track.file).then(seconds => { track.duration = seconds; });
+  }
+
+  const args = ['-hide_banner', '-loglevel', 'error'];
+  if (offset > 0) args.push('-ss', String(offset));
+  args.push('-i', track.file, '-vn', '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1');
+
+  const previous = track.ffmpeg;
+
+  const ffmpeg = spawn(ffmpegPath || 'ffmpeg', args, {
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe']
   });
 
   track.ffmpeg = ffmpeg;
 
+  // Déplacement dans le morceau ou répétition : l'ancien processus est arrêté sans toucher au fichier.
+  if (previous && previous.exitCode === null) previous.kill();
+
   ffmpeg.stderr.on('data', data => {
     console.error('FFmpeg :', data.toString());
   });
 
   ffmpeg.on('error', error => {
+    if (track.ffmpeg !== ffmpeg) return;
     console.error('Erreur FFmpeg :', error);
 
     if (state.current === track) {
@@ -971,7 +1121,10 @@ function playTrack(guildId, state, track) {
   });
 
   ffmpeg.on('close', code => {
-    if (track.deleteOnFinish) {
+    if (track.ffmpeg !== ffmpeg) return; // remplacé (déplacement) ou nettoyé
+
+    // En répétition, on garde le fichier : il sera supprimé quand le morceau sera vraiment terminé.
+    if (track.deleteOnFinish && !state.loopTrack) {
       deleteUploadedFile(track.file);
     }
 
@@ -981,7 +1134,10 @@ function playTrack(guildId, state, track) {
     }
   });
 
-  const resource = createAudioResource(ffmpeg.stdout, {
+  const tap = makeTap(guildId);
+  state.tap = tap;
+
+  const resource = createAudioResource(ffmpeg.stdout.pipe(tap), {
     inputType: StreamType.Raw,
     inlineVolume: true
   });
@@ -991,9 +1147,52 @@ function playTrack(guildId, state, track) {
 
   state.player.play(resource);
 
-  state.textChannel?.send(
-    `🎵 Lecture en cours : **${track.name}**`
-  ).catch(() => {});
+  if (!silent) {
+    state.textChannel?.send(
+      `🎵 Lecture en cours : **${track.name}**`
+    ).catch(() => {});
+  }
+}
+
+// Position actuelle dans le morceau, en secondes (null si rien ne joue).
+function trackPosition(state) {
+  const track = state?.current;
+  if (!track || !state.resource || state.player.state.status === AudioPlayerStatus.Idle) return null;
+
+  const position = (track.offset || 0) + (state.resource.playbackDuration || 0) / 1000;
+  return track.duration ? Math.min(position, track.duration) : position;
+}
+
+// Avance dans le morceau en cours (secondes) : la lecture reprend à cet endroit.
+function seekTrack(guildId, seconds) {
+  const state = queues.get(guildId);
+  const track = state?.current;
+
+  if (!track || state.player.state.status === AudioPlayerStatus.Idle) throw new Error('Aucun morceau en cours de lecture.');
+  if (!track.file || !fs.existsSync(track.file)) throw new Error('Le morceau n’est pas encore prêt (téléchargement en cours).');
+
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value < 0) throw new Error('Position invalide.');
+
+  const target = track.duration ? Math.min(value, Math.max(0, track.duration - 1)) : value;
+  const status = state.player.state.status;
+  const wasPaused = status === AudioPlayerStatus.Paused || status === AudioPlayerStatus.AutoPaused;
+
+  playTrack(guildId, state, track, target, true);
+
+  // Si c'était en pause, on remet en pause dès que la lecture repart.
+  if (wasPaused) {
+    const process = track.ffmpeg;
+    state.player.once(AudioPlayerStatus.Playing, () => {
+      if (state.current === track && track.ffmpeg === process) state.player.pause();
+    });
+  }
+}
+
+// Passe volontairement à un autre morceau (la répétition ne doit pas relancer celui-ci).
+function advance(state) {
+  state.forceNext = true;
+  if (!state.player.stop(true)) state.forceNext = false;
 }
 
 // ======================================
@@ -1201,7 +1400,7 @@ function playNow(guildId, state) {
     state.current = null;
     startTrack(guildId);
   } else {
-    state.player.stop(true);
+    advance(state);
   }
 }
 
@@ -1281,6 +1480,48 @@ const botApi = {
     }
   },
 
+  // Spectre audio du morceau en cours : 32 barres (0-255), alignées sur ce que Discord joue.
+  spectrum(guildId) {
+    assertGuild(guildId);
+
+    const state = queues.get(String(guildId));
+    const status = state?.player.state.status;
+
+    if (!state?.current || !state.tap || !state.resource || status === AudioPlayerStatus.Idle) {
+      return { bands: null };
+    }
+
+    const frame = state.tap.analyzer.at(state.resource.playbackDuration || 0);
+    return { bands: frame ? Array.from(frame) : null };
+  },
+
+  // Flux MP3 en direct du morceau en cours, pour l'écouter dans le navigateur.
+  listen(guildId, req, res) {
+    assertGuild(guildId);
+
+    const hub = hubFor(guildId);
+    if (hub.listeners.size >= MAX_LISTENERS) throw new Error('Trop d’auditeurs connectés.');
+
+    res.writeHead(200, {
+      'Content-Type': 'audio/mpeg',
+      'Cache-Control': 'no-store, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+    res.flushHeaders();
+    req.socket.setNoDelay(true);
+
+    hub.listeners.add(res);
+    startEncoder(hub);
+
+    const done = () => {
+      hub.listeners.delete(res);
+      if (!hub.listeners.size) stopEncoder(hub);
+    };
+    req.on('close', done);
+    res.on('close', done);
+  },
+
   volume(guildId, level) {
     assertGuild(guildId);
     return `🔊 Volume : ${setVolume(guildId, level)}%`;
@@ -1318,6 +1559,10 @@ const botApi = {
         queue: state ? state.items.map(track => track.name) : [],
         station: state?.station || null,
         loop: Boolean(state?.loop),
+        loopTrack: Boolean(state?.loopTrack && state.current),
+        position: trackPosition(state),
+        duration: state?.current?.duration || null,
+        seekable: Boolean(state?.current?.file && state.current.duration),
         canPrevious: Boolean(state?.history?.length),
         stations: guildStations(guild.id).map(s => ({
           name: s.name,
@@ -1539,13 +1784,13 @@ const botApi = {
     throw new Error('Action inconnue.');
   },
 
-  async control(guildId, action) {
+  async control(guildId, action, value) {
     const state = queues.get(String(guildId));
     if (!state) throw new Error('Aucune lecture sur ce serveur.');
 
     if (action === 'pause') state.player.pause();
     else if (action === 'resume') state.player.unpause();
-    else if (action === 'skip') state.player.stop(true);
+    else if (action === 'skip') advance(state);
     else if (action === 'previous') {
       const id = String(guildId);
       const previous = state.history.pop();
@@ -1568,7 +1813,7 @@ const botApi = {
         startTrack(id);
       } else {
         state.goingBack = true;
-        state.player.stop(true);
+        advance(state);
       }
     }
     else if (action === 'stop') stopGuild(String(guildId));
@@ -1578,6 +1823,12 @@ const botApi = {
       startTrack(String(guildId));
     }
     else if (action === 'loop-off') state.loop = false;
+    else if (action === 'repeat-on') {
+      if (!state.current) throw new Error('Aucun morceau en cours de lecture.');
+      state.loopTrack = true;
+    }
+    else if (action === 'repeat-off') state.loopTrack = false;
+    else if (action === 'seek') seekTrack(String(guildId), value);
     else throw new Error('Action inconnue.');
   }
 };
@@ -1731,7 +1982,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const name = state.current.name;
 
-      state.player.stop(true);
+      advance(state);
 
       return interaction.reply(
         `⏭️ **${name}** ignorée. Passage au morceau suivant...`
