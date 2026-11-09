@@ -1,0 +1,22 @@
+/* ANIM MCT : compléments au thème d'ADMIN MCT (admin/style.css est chargé avant ce fichier) */
+.stat-card h2{word-break:break-word}
+.nav-item.active .nav-emoji,.nav-emoji{opacity:.9}
+.button.small{padding:7px 11px;font-size:11px}
+.button.danger{background:#3b0f0d;color:#ffd0cd;border:1px solid var(--red)}
+.button.danger:hover{background:var(--red);color:#fff}
+.button.ghost{background:transparent;color:#fff;border:1px solid #444}
+.button.ghost:hover{border-color:var(--red)}
+.inline-form{display:inline}
+.row-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.msg-text{white-space:pre-wrap;max-width:560px;word-break:break-word}
+.msg-title{font-weight:700;margin-bottom:3px}
+.pill.off{background:#1c1c1c;border-color:#363636;color:#a1a1a1}
+.pill.ok{background:#10261c;border-color:#276c51;color:#9ce7c2}
+details.edit{margin-top:8px}
+details.edit summary{cursor:pointer;color:#ff6a63;font-size:12px;font-weight:700}
+details.edit form{margin-top:10px;max-width:560px}
+.choices{margin:0;padding-left:18px;color:#c9c9c9}
+.choices li.good{color:#9ce7c2;font-weight:700}
+.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media(max-width:650px){.form-grid{grid-template-columns:1fr}}
+.content-grid.single{grid-template-columns:1fr}
