@@ -48,6 +48,7 @@ FILE_TAG = "🎵 MP3 "            # identique à FILE_TAG dans index.js
 YOUTUBE_JSON = "youtube.json"    # identique à YOUTUBE_BACKUP_NAME dans index.js
 MAX_SECONDS = 2 * 3600           # identique à YTDLP_MAX_SECONDS dans index.js
 DEFAULT_QUALITY = 192
+MIN_KBPS = 48                    # en dessous, le son est trop dégradé : on ignore la vidéo
 
 
 # --------------------------------------------------------------- configuration
@@ -185,7 +186,12 @@ def ffmpeg_exe():
     return shutil.which("ffmpeg")
 
 
-def download_mp3(vid, out_dir, quality, hook=None):
+def max_duration_seconds(limit_bytes):
+    """Durée maximale d'une vidéo dont le MP3 peut tenir dans la limite d'envoi."""
+    return min(MAX_SECONDS, int(limit_bytes * 8 / (MIN_KBPS * 1000)))
+
+
+def download_mp3(vid, out_dir, quality, hook=None, max_seconds=MAX_SECONDS):
     import yt_dlp
 
     out_dir = Path(out_dir)
@@ -196,9 +202,10 @@ def download_mp3(vid, out_dir, quality, hook=None):
                             "preferredquality": str(quality)}],
         "outtmpl": str(out_dir / f"yt-{vid}.%(ext)s"),
         "noplaylist": True,
-        "match_filter": yt_dlp.utils.match_filter_func(f"!is_live & duration<={MAX_SECONDS}"),
+        "match_filter": yt_dlp.utils.match_filter_func(f"!is_live & duration<={max_seconds}"),
         "progress_hooks": [hook] if hook else [],
         "quiet": True,
+        "noprogress": True,
         "no_warnings": True,
         # YouTube exige un moteur JavaScript pour lister les formats audio (comme --js-runtimes node du bot)
         "js_runtimes": {"node": {}},
@@ -220,7 +227,7 @@ def download_mp3(vid, out_dir, quality, hook=None):
 
     target = out_dir / stored_name(vid)
     if not target.exists():
-        raise RuntimeError(f"vidéo ignorée (en direct ou de plus de {MAX_SECONDS // 3600} h).")
+        raise RuntimeError(f"vidéo ignorée (en direct, ou plus longue que {max_seconds // 60} min : son MP3 dépasserait la limite d'envoi du salon).")
     return target, (info or {}).get("title", "")
 
 
@@ -230,7 +237,7 @@ def fit_under_limit(path, quality, limit_bytes):
     if size <= limit_bytes:
         return
     kbps = int(quality * limit_bytes * 0.93 / size)
-    if kbps < 32:
+    if kbps < MIN_KBPS:
         raise RuntimeError("MP3 trop long pour la limite d'envoi Discord de ce serveur.")
     ffmpeg = ffmpeg_exe()
     if not ffmpeg:
@@ -256,7 +263,7 @@ def process_video(dc, vid, out_dir, quality=DEFAULT_QUALITY, hook=None, log=prin
     if target.exists():
         log("  MP3 déjà présent en local : envoi seul.")
     else:
-        target, title = download_mp3(vid, out_dir, quality, hook)
+        target, title = download_mp3(vid, out_dir, quality, hook, max_duration_seconds(upload_limit_bytes()))
     fit_under_limit(target, quality, upload_limit_bytes())
     dc.upload_mp3(stored_name(vid), target)
     if not keep_local:
