@@ -11,6 +11,9 @@ button,input,textarea,select{font:inherit}
 .brand small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
 .brand-mark{width:54px;height:54px;border-radius:16px;background:linear-gradient(135deg,var(--red),#8a0400);color:#fff;display:grid;place-items:center;font-weight:900;letter-spacing:1px;box-shadow:0 8px 24px #e1060040}
 .brand-mark.small{width:42px;height:42px;border-radius:13px;font-size:13px}
+.brand-logo{width:54px;height:54px;flex-shrink:0;object-fit:contain;border-radius:50%;filter:drop-shadow(0 6px 18px #e1060066)}
+.brand-logo.small{width:42px;height:42px}
+.login-card .brand-logo{display:block;width:96px;height:96px;margin:0 auto 20px}
 .nav-label,.eyebrow{font-size:10px;font-weight:800;letter-spacing:1.5px;color:var(--red2)}
 .nav-label{padding:0 12px 12px}
 .nav-item{display:flex;align-items:center;gap:12px;padding:12px;border-radius:10px;color:#c9c9c9;margin-bottom:5px;border-left:3px solid transparent}

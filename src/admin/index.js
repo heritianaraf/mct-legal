@@ -4,6 +4,8 @@
 //   ADMIN_MCT_TOKEN     token du bot ADMIN MCT (différent de DISCORD_TOKEN)
 //   ADMIN_MCT_PASSWORD  mot de passe du dashboard (accès THIVALIN)
 //   ADMIN_DATA_DIR      (facultatif) dossier des données (avertissements, message de bienvenue)
+//   ADMIN_BACKUP_CHANNEL_ID (facultatif) salon Discord privé où welcome.json et warns.json sont sauvegardés
+//                       (sinon BACKUP_CHANNEL_ID, le même salon que les playlists et youtube.json)
 
 const {
   Client,
@@ -37,6 +39,7 @@ function createAdmin(options = {}) {
   client.once(Events.ClientReady, async ready => {
     console.log(`ADMIN MCT connecté : ${ready.user.tag}`);
     ready.user.setPresence({ activities: [{ name: '🛡️ ADMIN MCT', type: ActivityType.Playing }], status: 'online' });
+    await store.attachBackup(ready); // restaure welcome.json / warns.json depuis le salon Discord s'ils sont absents
     for (const guild of ready.guilds.cache.values()) await registerCommands(guild);
   });
 
