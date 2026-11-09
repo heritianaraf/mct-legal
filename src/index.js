@@ -3511,7 +3511,7 @@ async function syncYoutube({ retryErrors = false } = {}) {
 // ======================================
 // OUTIL PYTHON (youtube_sync.py) lancé par le bot : active-le avec YOUTUBE_PYTHON_SYNC=1
 // Il lit youtube.json dans le salon, télécharge les MP3 manquants et les renvoie dans le salon.
-// Dépendances Python installées au build dans ./pylibs (voir requirements.txt).
+// Dépendances Python installées au build dans ./pylibs : pip install --target pylibs yt-dlp requests
 // ======================================
 
 let pythonSyncStarted = false;
@@ -3519,19 +3519,23 @@ let pythonSyncStarted = false;
 function startPythonSync() {
   if (process.env.YOUTUBE_PYTHON_SYNC !== '1' || pythonSyncStarted) return;
 
-  const script = path.join(__dirname, 'youtube_sync.py');
-  if (!fs.existsSync(script)) return console.warn('YOUTUBE_PYTHON_SYNC=1 mais youtube_sync.py est introuvable.');
+  // youtube_sync.py à côté de index.js ou à la racine du dépôt
+  const script = [__dirname, path.join(__dirname, '..'), process.cwd()]
+    .map(folder => path.join(folder, 'youtube_sync.py'))
+    .find(file => fs.existsSync(file));
+  if (!script) return console.warn('YOUTUBE_PYTHON_SYNC=1 mais youtube_sync.py est introuvable.');
 
   pythonSyncStarted = true;
   const minutes = Math.max(1, Number(process.env.YOUTUBE_PYTHON_MINUTES) || 10);
   const outDir = path.join(DATA_DIR, 'youtube-python');
-  const pylibs = path.join(__dirname, 'pylibs');
+  // pylibs : dossier créé au build (à la racine du dépôt ou à côté de index.js)
+  const pylibs = [path.join(__dirname, 'pylibs'), path.join(__dirname, '..', 'pylibs'), path.join(process.cwd(), 'pylibs')];
 
   const launch = python => {
     const child = spawn(python, [script, '--watch', String(minutes), '--out', outDir, '--delete-after'], {
       env: {
         ...process.env,
-        PYTHONPATH: [pylibs, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+        PYTHONPATH: [...pylibs, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
         PYTHONUNBUFFERED: '1',
         FFMPEG_LOCATION: process.env.FFMPEG_LOCATION || ffmpegPath || ''
       },
