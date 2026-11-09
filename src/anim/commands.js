@@ -12,11 +12,11 @@ const {
 } = require('discord.js');
 const store = require('./store');
 
-const RED = 0xe10600;
+const SKY = 0x38bdf8;
 const GREEN = 0x57f287;
 const EPHEMERAL = MessageFlags.Ephemeral;
 const pick = list => list[Math.floor(Math.random() * list.length)];
-const embed = (title, description, color = RED) => new EmbedBuilder().setColor(color).setTitle(title).setDescription(description).setTimestamp();
+const embed = (title, description, color = SKY) => new EmbedBuilder().setColor(color).setTitle(title).setDescription(description).setTimestamp();
 
 const activeQuizzes = new Map(); // identifiant -> { quiz, answered: Set }
 

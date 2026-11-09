@@ -1,11 +1,10 @@
-/* ANIM MCT : compléments au thème d'ADMIN MCT (admin/style.css est chargé avant ce fichier) */
+/* ANIM MCT : thème bleu ciel, par-dessus celui d'ADMIN MCT (admin/style.css est chargé avant ce fichier) */
 .stat-card h2{word-break:break-word}
-.nav-item.active .nav-emoji,.nav-emoji{opacity:.9}
 .button.small{padding:7px 11px;font-size:11px}
-.button.danger{background:#3b0f0d;color:#ffd0cd;border:1px solid var(--red)}
-.button.danger:hover{background:var(--red);color:#fff}
+.button.danger{background:#3b0f0d;color:#ffd0cd;border:1px solid #e10600}
+.button.danger:hover{background:#e10600;color:#fff}
 .button.ghost{background:transparent;color:#fff;border:1px solid #444}
-.button.ghost:hover{border-color:var(--red)}
+.button.ghost:hover{border-color:var(--red2)}
 .inline-form{display:inline}
 .row-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .msg-text{white-space:pre-wrap;max-width:560px;word-break:break-word}
@@ -13,10 +12,26 @@
 .pill.off{background:#1c1c1c;border-color:#363636;color:#a1a1a1}
 .pill.ok{background:#10261c;border-color:#276c51;color:#9ce7c2}
 details.edit{margin-top:8px}
-details.edit summary{cursor:pointer;color:#ff6a63;font-size:12px;font-weight:700}
+details.edit summary{cursor:pointer;color:#7dd3fc;font-size:12px;font-weight:700}
 details.edit form{margin-top:10px;max-width:560px}
 .choices{margin:0;padding-left:18px;color:#c9c9c9}
 .choices li.good{color:#9ce7c2;font-weight:700}
 .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 @media(max-width:650px){.form-grid{grid-template-columns:1fr}}
 .content-grid.single{grid-template-columns:1fr}
+
+/* ---- bleu ciel ---- */
+:root{--red:#0ea5e9;--red2:#38bdf8;--redsoft:#0c2a3d}
+.brand-mark{background:linear-gradient(135deg,#38bdf8,#0369a1);box-shadow:0 8px 24px #0ea5e940}
+.brand-logo{filter:drop-shadow(0 6px 18px #0ea5e966)}
+.purple,.blue,.green{background:var(--redsoft);color:#7dd3fc}
+.pill{border-color:#144a6b;background:var(--redsoft);color:#bae6fd}
+.pill.off{background:#1c1c1c;border-color:#363636;color:#a1a1a1}
+.pill.ok{background:#10261c;border-color:#276c51;color:#9ce7c2}
+.form-hint code{color:#bae6fd;background:#0c2a3d}
+.table-link{color:#7dd3fc}
+.button.primary{color:#04121c}
+.button.primary:hover{background:var(--red2)}
+.status-dot{box-shadow:0 0 8px var(--red)}
+.login-body{background:radial-gradient(ellipse at top,#0c3350 0,transparent 55%),var(--bg)}
+.flash.error{background:#3b0f0d;border-color:#e10600;color:#ffd0cd}

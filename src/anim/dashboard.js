@@ -10,6 +10,8 @@ const store = require('./store');
 const animation = require('./animation');
 
 const BASE = '/anim';
+const MAX_IMAGE = 8 * 1024 * 1024;
+const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
 const LOGO = 'https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png';
 const ICON = `<link rel="icon" type="image/png" href="${LOGO}"><link rel="apple-touch-icon" href="${LOGO}">`;
 // Thème d'ADMIN MCT + compléments propres à ANIM MCT
@@ -130,7 +132,7 @@ function createDashboard(getClient) {
 
   const layout = ({ title, heading, sub, active, content, flash, backLink }) => `<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)} · ANIM MCT</title>${ICON}<link rel="stylesheet" href="${BASE}/static/style.css?v=1"></head>
+<title>${esc(title)} · ANIM MCT</title>${ICON}<link rel="stylesheet" href="${BASE}/static/style.css?v=2"></head>
 <body><div class="app-shell">
 <aside class="sidebar">
   <a class="brand" href="${BASE}/"><img class="brand-logo small" width="42" height="42" src="${LOGO}" alt="MCT"><span><b>ANIM MCT</b><small>Animation de la communauté</small></span></a>
@@ -158,7 +160,7 @@ function createDashboard(getClient) {
 
   const loginPage = (message = '') => `<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connexion · ANIM MCT</title>${ICON}<link rel="stylesheet" href="${BASE}/static/style.css?v=1"></head>
+<title>Connexion · ANIM MCT</title>${ICON}<link rel="stylesheet" href="${BASE}/static/style.css?v=2"></head>
 <body class="login-body"><main class="login-card">
   <img class="brand-logo" width="96" height="96" src="${LOGO}" alt="MCT"><p class="eyebrow">MADAGASCAR COMMUNITY TEAM</p>
   <h1>ANIM MCT</h1><p class="muted">Accès réservé à l'équipe d'animation.</p>
@@ -189,6 +191,21 @@ function createDashboard(getClient) {
       next = !active ? 'Aucun message actif' : minutes <= 1 ? 'Imminente' : minutes >= 120 ? `Dans ${Math.round(minutes / 60)} h` : `Dans ${minutes} min`;
     }
 
+    const announcePanel = `<article class="panel">
+        <div class="panel-heading"><div><h2>📢 Envoyer un message</h2><p class="muted">Publie un message, avec ou sans photo, dans un salon textuel.</p></div><span class="pill">Discord</span></div>
+        <form method="post" action="${BASE}/announce" class="form-stack" enctype="multipart/form-data">
+          <label for="ann_channel">Salon de destination</label>
+          <select id="ann_channel" name="channel_id" required>${channelOptions(auto.channelId, false)}</select>
+          <label for="ann_content">Contenu du message</label>
+          <textarea id="ann_content" name="content" rows="5" maxlength="2000" placeholder="📢 Écrivez votre message ici..."></textarea>
+          <div class="form-hint">Maximum 2 000 caractères. Les mentions automatiques sont désactivées.</div>
+          <label for="ann_image">📷 Ajouter une photo (facultatif)</label>
+          <input type="file" id="ann_image" name="image" accept="image/png,image/jpeg,image/gif,image/webp">
+          <div class="form-hint">Formats acceptés : PNG, JPG, JPEG, GIF et WEBP. Taille maximale : 8 Mo.</div>
+          <button class="button primary" type="submit">➤ Envoyer le message</button>
+        </form>
+      </article>`;
+
     const content = `
     <section class="stats-grid">
       <article class="stat-card"><span class="stat-icon purple">◉</span><div><p class="muted">État du bot</p><h2>${client.isReady() ? 'En ligne' : 'Connexion...'}</h2><small>${guilds.length} serveur(s) connecté(s)</small></div></article>
@@ -196,6 +213,7 @@ function createDashboard(getClient) {
       <article class="stat-card"><span class="stat-icon green">⏱</span><div><p class="muted">Prochaine animation</p><h2>${esc(next)}</h2><small>Toutes les ${auto.intervalMinutes} min</small></div></article>
     </section>
     <section class="content-grid">
+      ${announcePanel}
       <article class="panel">
         <div class="panel-heading"><div><h2>🚀 Publier maintenant</h2><p class="muted">Envoie tout de suite un message d'animation dans un salon.</p></div><span class="pill">Discord</span></div>
         <form method="post" action="${BASE}/publish" class="form-stack">
@@ -387,6 +405,42 @@ function createDashboard(getClient) {
     }
   }
 
+  // Message libre avec ou sans photo (comme ADMIN MCT)
+  async function announce(req, res) {
+    const form = await readForm(req, MAX_IMAGE + 1024 * 1024);
+    const target = `${BASE}/`;
+    const channelId = field(form, 'channel_id');
+    const content = String(form.get('content') || '').trim();
+    const image = form.get('image');
+    const hasImage = image && typeof image === 'object' && image.size > 0;
+
+    if (!/^\d{1,25}$/.test(channelId)) return back(res, target, 'err', 'Choisis un salon Discord.');
+    if (!content && !hasImage) return back(res, target, 'err', 'Ajoute un message ou une image.');
+    if (content.length > 2000) return back(res, target, 'err', 'Le message dépasse la limite Discord de 2 000 caractères.');
+
+    const payload = { allowedMentions: { parse: [] } };
+    if (content) payload.content = content;
+
+    if (hasImage) {
+      const ext = path.extname(image.name || '').toLowerCase();
+      if (!IMAGE_EXT.has(ext)) return back(res, target, 'err', 'Format d\'image non autorisé. Utilise PNG, JPG, GIF ou WEBP.');
+      if (image.size > MAX_IMAGE) return back(res, target, 'err', 'L\'image ne doit pas dépasser 8 Mo.');
+      const name = path.basename(image.name).replace(/[^\w.-]/g, '_') || `image${ext}`;
+      payload.files = [{ attachment: Buffer.from(await image.arrayBuffer()), name }];
+    }
+
+    const channel = await animation.resolveChannel(getClient(), channelId);
+    if (!channel) return back(res, target, 'err', 'Salon introuvable ou inaccessible au bot.');
+
+    try {
+      await channel.send(payload);
+    } catch (error) {
+      console.error('ANIM MCT message :', error.message);
+      return back(res, target, 'err', 'Envoi impossible. Vérifie les permissions du bot dans ce salon.');
+    }
+    return back(res, target, 'ok', `Message envoyé dans #${channel.name}.`);
+  }
+
   async function messageAction(req, res, action) {
     const form = await readForm(req, 20000);
     const target = `${BASE}/messages`;
@@ -510,6 +564,7 @@ function createDashboard(getClient) {
           sessions.delete(token);
           return redirect(res, `${BASE}/login`, { 'Set-Cookie': `anm=; HttpOnly; SameSite=Strict; Path=${BASE}; Max-Age=0` });
         }
+        if (route === '/announce') return await announce(req, res);
         if (route === '/publish') return await publishNow(req, res);
         if (route === '/save/auto') return await savePanel(req, res, 'auto');
         if (route === '/save/welcome') return await savePanel(req, res, 'welcome');

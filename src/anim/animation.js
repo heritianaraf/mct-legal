@@ -2,12 +2,12 @@
 
 const { EmbedBuilder } = require('discord.js');
 
-const RED = 0xe10600;
+const SKY = 0x38bdf8;
 const KINDS = { question: 'Question du jour', defi: 'Défi', custom: 'Message libre' };
 const TITLES = { question: '❓ Question du jour', defi: '🎯 Défi du jour', custom: '✨ Animation communautaire' };
 
 const buildEmbed = item => new EmbedBuilder()
-  .setColor(RED)
+  .setColor(SKY)
   .setTitle((item.kind === 'custom' && item.title) || TITLES[item.kind] || TITLES.custom)
   .setDescription(item.text)
   .setTimestamp();

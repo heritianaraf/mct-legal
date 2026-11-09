@@ -98,7 +98,7 @@ function createAnim(options = {}) {
       .replaceAll('{server}', escapeMarkdown(member.guild.name));
 
     await channel.send({
-      embeds: [new EmbedBuilder().setColor(0xe10600).setTitle('👋 Bienvenue !').setDescription(text).setTimestamp()],
+      embeds: [new EmbedBuilder().setColor(0x38bdf8).setTitle('👋 Bienvenue !').setDescription(text).setTimestamp()],
       allowedMentions: { users: [member.id], roles: [], parse: [] }
     }).catch(() => {});
   });
