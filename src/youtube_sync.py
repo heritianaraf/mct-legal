@@ -25,7 +25,7 @@ Utilisation :
 Configuration : variables d'environnement ou fichier .env (dossier courant,
 dossier du script ou dossier parent, donc celui du bot) :
     DISCORD_TOKEN, BACKUP_CHANNEL_ID
-    optionnel : YOUTUBE_COOKIES_FILE, YOUTUBE_COOKIES_BROWSER (ex. chrome),
+    optionnel : YOUTUBE_COOKIES (contenu de cookies.txt, comme le bot), YOUTUBE_COOKIES_FILE, YOUTUBE_COOKIES_BROWSER (ex. chrome),
                 FFMPEG_LOCATION, DISCORD_UPLOAD_LIMIT_MB (10 par défaut)
 """
 
@@ -35,6 +35,7 @@ import os
 import queue
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -202,7 +203,12 @@ def download_mp3(vid, out_dir, quality, hook=None):
     }
     if os.environ.get("FFMPEG_LOCATION"):
         opts["ffmpeg_location"] = os.environ["FFMPEG_LOCATION"]
-    if os.environ.get("YOUTUBE_COOKIES_FILE"):
+    if os.environ.get("YOUTUBE_COOKIES"):
+        # même variable que le bot : contenu du fichier cookies.txt (les \n littéraux sont acceptés)
+        cookie_file = Path(tempfile.gettempdir()) / "youtube-cookies.txt"
+        cookie_file.write_text(os.environ["YOUTUBE_COOKIES"].replace("\\n", "\n"), encoding="utf-8")
+        opts["cookiefile"] = str(cookie_file)
+    elif os.environ.get("YOUTUBE_COOKIES_FILE"):
         opts["cookiefile"] = os.environ["YOUTUBE_COOKIES_FILE"]
     elif os.environ.get("YOUTUBE_COOKIES_BROWSER"):
         opts["cookiesfrombrowser"] = (os.environ["YOUTUBE_COOKIES_BROWSER"],)
