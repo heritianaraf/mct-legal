@@ -25,6 +25,20 @@ function startWeb(bot) {
   const sessions = new Map();
   const attempts = new Map();
 
+  // Présence : un identifiant par onglet ouvert (envoyé à chaque /api/state, toutes les 3 s)
+  const presence = new Map(); // cid -> { role, seen }
+  const PRESENCE_TTL = 75000; // onglet en arrière-plan = rafraîchissement ralenti par le navigateur
+  const clientIdOf = value => (/^[a-f0-9]{16,64}$/.test(String(value || '')) ? String(value) : null);
+  const onlineCounts = () => {
+    const counts = { thivalin: 0, mct: 0, visiteur: 0 };
+    const now = Date.now();
+    for (const [cid, entry] of presence) {
+      if (now - entry.seen > PRESENCE_TTL) presence.delete(cid);
+      else if (counts[entry.role] !== undefined) counts[entry.role]++;
+    }
+    return counts;
+  };
+
   const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 
   const send = (res, code, data, headers = {}) => {
@@ -179,13 +193,22 @@ function startWeb(bot) {
         return bot.listen(playerOf(guildOf(url.searchParams.get('guildId'))), req, res);
       }
 
+      // Onglet fermé : on le retire tout de suite (navigator.sendBeacon)
+      if (url.pathname === '/api/leave' && req.method === 'POST') {
+        const cid = clientIdOf(url.searchParams.get('cid'));
+        if (cid) presence.delete(cid);
+        return send(res, 200, { ok: true });
+      }
+
       if (url.pathname === '/api/state' && req.method === 'GET') {
+        const cid = clientIdOf(url.searchParams.get('cid'));
+        if (cid) presence.set(cid, { role, seen: Date.now() });
         const guilds = bot.getState().map(({ personal, ...guild }) => {
           if (role === 'thivalin') return { ...guild, ...personal, channels: [] };
           if (role === 'visiteur') return { ...guild, channels: [], channelId: null, stations: [], discordMuted: false };
           return guild;
         });
-        return send(res, 200, { role, admin: Boolean(session.admin), guilds });
+        return send(res, 200, { role, admin: Boolean(session.admin), online: onlineCounts(), guilds });
       }
 
       if (url.pathname === '/api/play' && req.method === 'POST') {

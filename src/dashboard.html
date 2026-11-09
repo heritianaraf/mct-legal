@@ -405,6 +405,16 @@ summary {
     color: #fff;
 }
 
+.online {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 14px;
+  margin: 0 0 12px;
+  font-size: 13px;
+  opacity: .85;
+}
+.online b { font-weight: 700; }
 .roles button.on {
     background: var(--blue);
     box-shadow: 0 6px 22px rgba(79, 110, 255, .4);
@@ -712,6 +722,7 @@ button.activity {
 >
     <h1>MCT<span>·</span>MUSIC</h1>
     <p class="sub">Pilote le bot depuis ton navigateur.</p>
+    <div id="online" class="online" aria-live="polite"></div>
 
     <nav class="tabs roles" id="roles" aria-label="Accès" hidden>
       <button type="button" data-role="thivalin">👑 THIVALIN</button>
@@ -1213,9 +1224,38 @@ function render() {
   $('qempty').hidden = queue.length > 0;
 }
 
+// Identifiant propre à cet onglet (sert à compter les utilisateurs connectés)
+const cid = (() => {
+  const bytes = new Uint8Array(16);
+  (window.crypto || {}).getRandomValues ? crypto.getRandomValues(bytes) : bytes.forEach((_, i) => { bytes[i] = Math.random() * 256; });
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+})();
+
+window.addEventListener('pagehide', () => navigator.sendBeacon('/api/leave?cid=' + cid));
+
+function renderOnline(online) {
+  const box = $('online');
+  if (!online) { box.textContent = ''; return; }
+  const total = online.thivalin + online.mct + online.visiteur;
+  box.replaceChildren();
+  [
+    ['🟢 En ligne', total],
+    ['👑 THIVALIN', online.thivalin],
+    ['MCT', online.mct],
+    ['Visiteur', online.visiteur]
+  ].forEach(([label, n]) => {
+    const span = document.createElement('span');
+    const strong = document.createElement('b');
+    strong.textContent = n;
+    span.append(label + ' : ', strong);
+    box.append(span);
+  });
+}
+
 async function refresh() {
   try {
-    data = await api('/api/state');
+    data = await api('/api/state?cid=' + cid);
+    renderOnline(data.online);
     setRole(data.role, data.admin);
     show(true);
     render();
