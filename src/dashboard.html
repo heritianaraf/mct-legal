@@ -398,6 +398,17 @@ summary {
     display: none !important;
 }
 
+/* Logo Discord : bleu Discord quand le son passe par Discord */
+.ctl > button#out-discord.on {
+    background: #5865f2;
+    color: #fff;
+}
+
+.roles button.on {
+    background: var(--blue);
+    box-shadow: 0 6px 22px rgba(79, 110, 255, .4);
+}
+
 /* Accès (selon le mot de passe) */
 #app[data-role="thivalin"] #channel,
 #app[data-role="thivalin"] #out-discord,
@@ -684,6 +695,12 @@ button.activity {
     <h1>MCT<span>·</span>MUSIC</h1>
     <p class="sub">Pilote le bot depuis ton navigateur.</p>
 
+    <nav class="tabs roles" id="roles" aria-label="Accès" hidden>
+      <button type="button" data-role="thivalin">👑 THIVALIN</button>
+      <button type="button" data-role="mct">MCT</button>
+      <button type="button" data-role="visiteur">Visiteur</button>
+    </nav>
+
     <nav class="tabs" id="tabs" aria-label="Pages">
       <button type="button" data-tab="player" class="on">🎵 Lecteur</button>
       <button type="button" data-tab="playlists">📋 Playlists</button>
@@ -717,7 +734,7 @@ button.activity {
         <button id="stop" class="ghost" title="Arrêter" aria-label="Arrêter"><svg class="ic fill" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg></button>
         <button id="loop" class="ghost" hidden title="Boucle de la playlist" aria-label="Boucle de la playlist"><svg class="ic stk" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></svg></button>
         <button id="repeat" class="ghost" hidden title="Répéter le morceau" aria-label="Répéter le morceau"><svg class="ic stk" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/><path d="M11 10.5l1.5-1V15"/></svg></button>
-        <button id="out-discord" class="ghost on" title="Jouer le son sur Discord" aria-label="Jouer le son sur Discord"><svg class="ic stk" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5L6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg></button>
+        <button id="out-discord" class="ghost on" title="Jouer le son sur Discord" aria-label="Jouer le son sur Discord"><svg class="ic fill" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189z"/></svg></button>
         <button id="out-device" class="ghost" title="Jouer le son sur cet appareil" aria-label="Jouer le son sur cet appareil"><svg class="ic stk" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg></button>
       </div>
       <div class="vol seek">
@@ -1181,7 +1198,7 @@ function render() {
 async function refresh() {
   try {
     data = await api('/api/state');
-    setRole(data.role);
+    setRole(data.role, data.admin);
     show(true);
     render();
   } catch (error) {
@@ -1819,11 +1836,39 @@ $('stopenadd').onclick = () => {
 let role = 'mct';
 let autoListen = true;
 
-function setRole(next) {
+function setRole(next, admin) {
   role = ['mct', 'thivalin', 'visiteur'].includes(next) ? next : 'mct';
   $('app').dataset.role = role;
+  $('roles').hidden = !admin;
+  document.querySelectorAll('#roles button').forEach(b => b.classList.toggle('on', b.dataset.role === role));
   if (role === 'visiteur') $('app').dataset.tab = 'player';
 }
+
+// Admin (THIVALIN) : bascule sur un autre accès pour voir ce qu'il voit
+document.querySelectorAll('#roles button').forEach(b => {
+  b.onclick = async () => {
+    const next = b.dataset.role;
+    if (next === role) return;
+
+    const g = data.guilds.find(x => x.id === $('guild').value);
+    const restoreDiscord = role === 'mct' && g?.discordMuted;
+    const guildId = $('guild').value;
+
+    stopListening();
+    volTouched = 0;
+    currentName = null;
+
+    try {
+      if (restoreDiscord) await api('/api/control', post({ guildId, action: 'output', value: 'discord-on' }));
+      await api('/api/role', post({ role: next }));
+      autoListen = true;
+      msg('');
+    } catch (error) {
+      msg(error.message, true);
+    }
+    refresh();
+  };
+});
 
 // THIVALIN n'a pas de son sur Discord : au premier clic (le navigateur l'exige), l'écoute sur l'appareil démarre.
 document.addEventListener('click', event => {

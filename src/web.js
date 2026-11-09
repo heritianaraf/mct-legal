@@ -113,7 +113,7 @@ function startWeb(bot) {
         }
 
         const token = crypto.randomBytes(32).toString('hex');
-        sessions.set(token, { role, expires: Date.now() + 12 * 3600 * 1000 });
+        sessions.set(token, { role, admin: role === 'thivalin', expires: Date.now() + 12 * 3600 * 1000 }); // THIVALIN = admin : il peut changer d'accès
         const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
         return send(res, 200, { ok: true, role }, {
           'Set-Cookie': `mct=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${secure}`
@@ -122,6 +122,15 @@ function startWeb(bot) {
 
       const session = isAuthed(req);
       if (!session) throw fail('Non connecté.', 401);
+
+      // THIVALIN (admin) peut basculer sur un autre accès : toute la suite se comporte alors comme cet accès
+      if (url.pathname === '/api/role' && req.method === 'POST') {
+        if (!session.admin) throw fail('Réservé à l’administrateur.', 403);
+        const { role: next } = await readJson(req);
+        if (!['thivalin', 'mct', 'visiteur'].includes(next)) throw fail('Accès inconnu.');
+        session.role = next;
+        return send(res, 200, { ok: true, role: next });
+      }
 
       const role = session.role;
       const allow = (...roles) => {
@@ -163,7 +172,7 @@ function startWeb(bot) {
           if (role === 'visiteur') return { ...guild, channels: [], channelId: null, stations: [], discordMuted: false };
           return guild;
         });
-        return send(res, 200, { role, guilds });
+        return send(res, 200, { role, admin: Boolean(session.admin), guilds });
       }
 
       if (url.pathname === '/api/play' && req.method === 'POST') {
