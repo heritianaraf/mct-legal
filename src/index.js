@@ -787,7 +787,7 @@ function setVolume(guildId, level) {
     console.error('Impossible d’enregistrer le volume :', error.message);
   }
 
-  queues.get(String(guildId))?.resource?.volume?.setVolume(value / 100);
+  queues.get(String(guildId))?.resource?.volume?.setVolume(effectiveVolume(guildId));
   return value;
 }
 
@@ -1142,7 +1142,7 @@ function playTrack(guildId, state, track, offset = 0, silent = false) {
     inlineVolume: true
   });
 
-  resource.volume?.setVolume(getVolume(guildId) / 100);
+  resource.volume?.setVolume(effectiveVolume(guildId));
   state.resource = resource;
 
   state.player.play(resource);
@@ -1162,6 +1162,52 @@ function trackPosition(state) {
   const position = (track.offset || 0) + (state.resource.playbackDuration || 0) / 1000;
   return track.duration ? Math.min(position, track.duration) : position;
 }
+
+// ======================================
+// SORTIE DU SON : Discord OU l'appareil qui ouvre le dashboard
+// En mode « appareil », le bot reste connecté mais n'envoie plus de son dans le salon vocal
+// (volume Discord à 0) : le son est diffusé uniquement dans le navigateur (flux /api/listen).
+// ======================================
+
+const outputs = new Map(); // guildId -> 'device' (absent = Discord)
+
+const getOutput = guildId => (outputs.get(String(guildId)) === 'device' ? 'device' : 'discord');
+const effectiveVolume = guildId => (getOutput(guildId) === 'device' ? 0 : getVolume(guildId) / 100);
+
+function setOutput(guildId, mode) {
+  const id = String(guildId);
+
+  if (mode !== 'discord' && mode !== 'device') throw new Error('Sortie inconnue.');
+
+  if (mode === 'device') {
+    outputs.set(id, 'device');
+    hubFor(id).since = Date.now(); // délai de grâce : le navigateur doit se connecter au flux
+  } else {
+    outputs.delete(id);
+  }
+
+  queues.get(id)?.resource?.volume?.setVolume(effectiveVolume(id));
+}
+
+// Si plus aucun appareil n'écoute depuis 15 s (onglet fermé, réseau coupé), le son revient sur Discord.
+setInterval(() => {
+  for (const id of [...outputs.keys()]) {
+    const hub = hubFor(id);
+
+    if (hub.listeners.size) {
+      hub.since = 0;
+      continue;
+    }
+
+    hub.since ||= Date.now();
+
+    if (Date.now() - hub.since > 15000) {
+      hub.since = 0;
+      setOutput(id, 'discord');
+      console.log(`🔊 Aucun appareil n'écoute : le son revient sur Discord (${id}).`);
+    }
+  }
+}, 5000).unref?.();
 
 // Avance dans le morceau en cours (secondes) : la lecture reprend à cet endroit.
 function seekTrack(guildId, seconds) {
@@ -1555,6 +1601,7 @@ const botApi = {
         channelId: state?.connection?.joinConfig?.channelId || null,
         current: state?.current?.name || null,
         volume: getVolume(guild.id),
+        output: getOutput(guild.id),
         paused: status === AudioPlayerStatus.Paused || status === AudioPlayerStatus.AutoPaused,
         queue: state ? state.items.map(track => track.name) : [],
         station: state?.station || null,
@@ -1785,6 +1832,11 @@ const botApi = {
   },
 
   async control(guildId, action, value) {
+    if (action === 'output') {
+      assertGuild(guildId);
+      return setOutput(guildId, value);
+    }
+
     const state = queues.get(String(guildId));
     if (!state) throw new Error('Aucune lecture sur ce serveur.');
 
