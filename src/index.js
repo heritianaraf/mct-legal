@@ -69,6 +69,12 @@ const MAX_DRIVE_FOLDER_TRACKS = 100;
 
 const queues = new Map();
 
+// Lecteur personnel (accès THIVALIN) : un état de lecture séparé, sans salon vocal,
+// écouté uniquement dans le navigateur. Clé : « tv:<id du serveur> ».
+const PERSONAL = 'tv:';
+const isPersonal = id => String(id).startsWith(PERSONAL);
+const realId = id => (isPersonal(id) ? String(id).slice(PERSONAL.length) : String(id));
+
 fs.mkdirSync(MUSIC_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -798,7 +804,8 @@ function setVolume(guildId, level) {
 function createMusicState(guildId, textChannel) {
   const player = createAudioPlayer({
     behaviors: {
-      noSubscriber: NoSubscriberBehavior.Pause
+      // Lecteur personnel : personne n'est abonné (pas de vocal), la lecture doit quand même avancer.
+      noSubscriber: isPersonal(guildId) ? NoSubscriberBehavior.Play : NoSubscriberBehavior.Pause
     }
   });
 
@@ -1432,6 +1439,26 @@ function stopGuild(guildId) {
 }
 
 async function webEnqueue(guildId, channelId, add) {
+  // Lecteur personnel : pas de salon vocal, le son part uniquement vers le navigateur
+  if (isPersonal(guildId)) {
+    assertGuild(guildId);
+    const id = String(guildId);
+
+    let state = queues.get(id);
+    if (!state) {
+      state = createMusicState(id, null);
+      queues.set(id, state);
+    }
+
+    try {
+      const message = await add(state);
+      startTrack(id);
+      return message;
+    } finally {
+      if (!state.current && state.items.length === 0) stopGuild(id);
+    }
+  }
+
   const guild = client.guilds.cache.get(String(guildId));
   const channel = guild?.channels.cache.get(String(channelId));
 
@@ -1474,7 +1501,29 @@ function playNow(guildId, state) {
 }
 
 function assertGuild(guildId) {
-  if (!client.guilds.cache.has(String(guildId))) throw new Error('Serveur introuvable.');
+  if (!client.guilds.cache.has(realId(guildId))) throw new Error('Serveur introuvable.');
+}
+
+// Vue d'un lecteur (Discord ou personnel) pour l'interface web.
+function playerView(id) {
+  const state = queues.get(id);
+  const status = state?.player.state.status;
+
+  return {
+    channelId: state?.connection?.joinConfig?.channelId || null,
+    current: state?.current?.name || null,
+    volume: getVolume(id),
+    discordMuted: discordMuted.has(id),
+    paused: status === AudioPlayerStatus.Paused || status === AudioPlayerStatus.AutoPaused,
+    queue: state ? state.items.map(track => track.name) : [],
+    station: state?.station || null,
+    loop: Boolean(state?.loop),
+    loopTrack: Boolean(state?.loopTrack && state.current),
+    position: trackPosition(state),
+    duration: state?.current?.duration || null,
+    seekable: Boolean(state?.current?.file && state.current.duration),
+    canPrevious: Boolean(state?.history?.length)
+  };
 }
 
 const botApi = {
@@ -1612,37 +1661,27 @@ const botApi = {
     return `🔊 ${await playSound(guild, channel, soundId)} envoyé.`;
   },
 
-  getState() {
-    return client.guilds.cache.map(guild => {
-      const state = queues.get(guild.id);
-      const status = state?.player.state.status;
+  // Salon vocal où le bot joue déjà (pour l'accès visiteur, qui ne choisit pas le salon).
+  activeChannel(guildId) {
+    return queues.get(String(guildId))?.connection?.joinConfig?.channelId || null;
+  },
 
-      return {
-        id: guild.id,
-        name: guild.name,
-        channels: guild.channels.cache
-          .filter(channel => channel.isVoiceBased())
-          .map(channel => ({ id: channel.id, name: channel.name })),
-        channelId: state?.connection?.joinConfig?.channelId || null,
-        current: state?.current?.name || null,
-        volume: getVolume(guild.id),
-        discordMuted: discordMuted.has(guild.id),
-        paused: status === AudioPlayerStatus.Paused || status === AudioPlayerStatus.AutoPaused,
-        queue: state ? state.items.map(track => track.name) : [],
-        station: state?.station || null,
-        loop: Boolean(state?.loop),
-        loopTrack: Boolean(state?.loopTrack && state.current),
-        position: trackPosition(state),
-        duration: state?.current?.duration || null,
-        seekable: Boolean(state?.current?.file && state.current.duration),
-        canPrevious: Boolean(state?.history?.length),
-        stations: guildStations(guild.id).map(s => ({
-          name: s.name,
-          locked: Boolean(s.password),
-          count: s.items.length
-        }))
-      };
-    });
+  getState() {
+    return client.guilds.cache.map(guild => ({
+      id: guild.id,
+      name: guild.name,
+      channels: guild.channels.cache
+        .filter(channel => channel.isVoiceBased())
+        .map(channel => ({ id: channel.id, name: channel.name })),
+      ...playerView(guild.id),
+      // lecteur personnel (THIVALIN) : jamais envoyé sur Discord, donc « Discord coupé » pour l'interface
+      personal: { ...playerView(PERSONAL + guild.id), channelId: null, discordMuted: true },
+      stations: guildStations(guild.id).map(s => ({
+        name: s.name,
+        locked: Boolean(s.password),
+        count: s.items.length
+      }))
+    }));
   },
 
   play(guildId, channelId, source, value, loop) {
@@ -1782,7 +1821,7 @@ const botApi = {
     const track = queues.get(String(guildId))?.current;
     if (!track) throw new Error('Aucun morceau en cours de lecture.');
 
-    const { done, notes } = await saveTracksToStations(String(guildId), [track], [station.name]);
+    const { done, notes } = await saveTracksToStations(realId(guildId), [track], [station.name]);
     if (!done) throw new Error(notes.slice(0, 3).join('\n') || 'Rien n’a été ajouté.');
     return [`✅ ${track.name} ajouté à ${station.name}.`, ...notes.slice(0, 3)].join('\n');
   },
@@ -1816,7 +1855,7 @@ const botApi = {
     });
 
     const { done, notes } = await saveTracksToStations(
-      String(guildId),
+      realId(guildId),
       tracks,
       stationNames.slice(0, MAX_STATIONS).map(String)
     );
@@ -2236,7 +2275,7 @@ function saveStations(all) {
   scheduleBackup();
 }
 
-const guildStations = guildId => loadStations()[guildId] || [];
+const guildStations = guildId => loadStations()[realId(guildId)] || [];
 const findStation = (guildId, name) => guildStations(guildId).find(s => sameName(s.name, name));
 
 async function deleteStoredFile(name) {
@@ -3450,7 +3489,9 @@ function updatePresence() {
   if (!client.isReady()) return;
 
   let name = null;
-  for (const state of queues.values()) {
+  for (const [id, state] of queues) {
+    if (isPersonal(id)) continue;
+
     if (state.current?.name) {
       name = String(state.current.name).slice(0, 120);
       break;

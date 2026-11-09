@@ -398,6 +398,21 @@ summary {
     display: none !important;
 }
 
+/* Accès (selon le mot de passe) */
+#app[data-role="thivalin"] #channel,
+#app[data-role="thivalin"] #out-discord,
+#app[data-role="thivalin"] #dract,
+#app[data-role="thivalin"] [data-feature="discord"],
+#app[data-role="visiteur"] #card-dest,
+#app[data-role="visiteur"] #out-discord,
+#app[data-role="visiteur"] #dract,
+#app[data-role="visiteur"] #tabs,
+#app[data-role="visiteur"] #qsave,
+#app[data-role="visiteur"] [data-feature="discord"],
+#app[data-role="visiteur"] [data-page="playlists"] {
+    display: none !important;
+}
+
 /* Version compacte des playlists */
 button.mini,
 label.file.mini {
@@ -660,7 +675,7 @@ button.activity {
 
     </form>
 
-  <div id="app" hidden data-tab="player">
+  <div id="app" hidden data-tab="player" data-role="mct">
     <img
     src="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"
     alt="MCT Music Player"
@@ -736,7 +751,7 @@ button.activity {
       </div>
     </div>
 
-    <div class="card" data-page="player">
+    <div class="card" data-page="player" data-feature="discord">
       <h2>Soundboard du serveur</h2>
       <div class="row">
         <select id="sound" aria-label="Son"></select>
@@ -1060,7 +1075,7 @@ function render() {
   const stations = g?.stations || [];
   renderStations(g, stations);
 
-  const onDevice = listening && Boolean(g?.discordMuted);
+  const onDevice = listening && (role !== 'mct' || Boolean(g?.discordMuted));
   if (Date.now() - volTouched > 4000) $('vol').value = onDevice ? deviceVol : (g?.volume ?? 100);
   $('voltxt').textContent = (onDevice ? '🎧 ' : '🔊 ') + $('vol').value + '%';
   setListenButton();
@@ -1166,6 +1181,7 @@ function render() {
 async function refresh() {
   try {
     data = await api('/api/state');
+    setRole(data.role);
     show(true);
     render();
   } catch (error) {
@@ -1645,7 +1661,7 @@ $('out-device').onclick = async () => {
   volTouched = 0;
 
   try {
-    if (g?.discordMuted) await api('/api/control', post({ guildId, action: 'output', value: 'discord-on' }));
+    if (role === 'mct' && g?.discordMuted) await api('/api/control', post({ guildId, action: 'output', value: 'discord-on' }));
     msg('🎧 Son coupé sur cet appareil.');
   } catch (error) {
     msg(error.message, true);
@@ -1688,7 +1704,7 @@ $('loop').onclick = () => {
 // Le curseur règle Discord ; quand Discord est coupé, il règle le volume de cet appareil.
 function volOnDevice() {
   const g = data.guilds.find(x => x.id === $('guild').value);
-  return listening && Boolean(g?.discordMuted);
+  return listening && (role !== 'mct' || Boolean(g?.discordMuted));
 }
 
 $('vol').oninput = () => {
@@ -1703,6 +1719,13 @@ $('vol').onchange = async () => {
   if (volOnDevice()) {
     deviceVol = Number($('vol').value);
     applyDeviceVolume();
+    return;
+  }
+
+  // Le volume de Discord est réservé à MCT : le visiteur règle seulement le son de son appareil
+  if (role === 'visiteur') {
+    volTouched = 0;
+    msg('Active le son sur cet appareil (🎧) pour régler ton volume : celui de Discord est réservé à MCT.', true);
     return;
   }
 
@@ -1791,6 +1814,23 @@ $('stopenadd').onclick = () => {
   $('stopenadd').setAttribute('aria-expanded', String(open));
   $('stopenadd').textContent = open ? '➖ Masquer l’ajout' : '➕ Ajouter des morceaux';
 };
+
+// Accès (selon le mot de passe saisi) : mct, thivalin ou visiteur
+let role = 'mct';
+let autoListen = true;
+
+function setRole(next) {
+  role = ['mct', 'thivalin', 'visiteur'].includes(next) ? next : 'mct';
+  $('app').dataset.role = role;
+  if (role === 'visiteur') $('app').dataset.tab = 'player';
+}
+
+// THIVALIN n'a pas de son sur Discord : au premier clic (le navigateur l'exige), l'écoute sur l'appareil démarre.
+document.addEventListener('click', event => {
+  if (role !== 'thivalin' || !autoListen || $('app').hidden || event.target.closest('#out-device')) return;
+  autoListen = false;
+  if (!listening) $('out-device').click();
+});
 
 // Onglets Lecteur / Playlists (mémorisés dans le navigateur)
 function setTab(tab) {
