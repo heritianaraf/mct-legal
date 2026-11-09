@@ -109,10 +109,10 @@ function createDashboard(getClient) {
   // ---------- pages ----------
   const layout = ({ title, heading, sub, active, content, flash, backLink }) => `<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)} · ADMIN MCT</title><link rel="icon" type="image/png" href="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"><link rel="apple-touch-icon" href="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"><link rel="stylesheet" href="${BASE}/static/style.css"></head>
+<title>${esc(title)} · ADMIN MCT</title><link rel="icon" type="image/png" href="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"><link rel="apple-touch-icon" href="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"><link rel="stylesheet" href="${BASE}/static/style.css?v=2"></head>
 <body><div class="app-shell">
 <aside class="sidebar">
-  <a class="brand" href="${BASE}/"><img class="brand-logo small" src="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png" alt="MCT"><span><b>ADMIN MCT</b><small>Espace THIVALIN</small></span></a>
+  <a class="brand" href="${BASE}/"><img class="brand-logo small" width="42" height="42" src="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png" alt="MCT"><span><b>ADMIN MCT</b><small>Espace THIVALIN</small></span></a>
   <div class="nav-label">MENU PRINCIPAL</div>
   <a class="nav-item${active === 'home' ? ' active' : ''}" href="${BASE}/">▦ <span>Vue d'ensemble</span></a>
   <a class="nav-item${active === 'tickets' ? ' active' : ''}" href="${BASE}/tickets">▣ <span>Tickets &amp; recrutement</span></a>
@@ -136,9 +136,9 @@ function createDashboard(getClient) {
 
   const loginPage = (message = '') => `<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connexion · ADMIN MCT</title><link rel="icon" type="image/png" href="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"><link rel="apple-touch-icon" href="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"><link rel="stylesheet" href="${BASE}/static/style.css"></head>
+<title>Connexion · ADMIN MCT</title><link rel="icon" type="image/png" href="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"><link rel="apple-touch-icon" href="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png"><link rel="stylesheet" href="${BASE}/static/style.css?v=2"></head>
 <body class="login-body"><main class="login-card">
-  <img class="brand-logo" src="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png" alt="MCT"><p class="eyebrow">MADAGASCAR COMMUNITY TEAM</p>
+  <img class="brand-logo" width="96" height="96" src="https://raw.githubusercontent.com/heritianaraf/mct-legal/main/src/assets/logo-music-player.png" alt="MCT"><p class="eyebrow">MADAGASCAR COMMUNITY TEAM</p>
   <h1>ADMIN MCT</h1><p class="muted">Accès réservé à THIVALIN.</p>
   ${message ? `<div class="flash error">${esc(message)}</div>` : ''}
   <form method="post" action="${BASE}/login">
