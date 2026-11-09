@@ -13,7 +13,7 @@ Il utilise le MÊME token que le bot (DISCORD_TOKEN) : le bot ne lit que les
 messages postés par lui-même.
 
 Installation :
-    pip install yt-dlp requests
+    pip install "yt-dlp[default]" requests
     ffmpeg doit être installé et dans le PATH (ou FFMPEG_LOCATION dans .env)
 
 Utilisation :
@@ -200,6 +200,8 @@ def download_mp3(vid, out_dir, quality, hook=None):
         "progress_hooks": [hook] if hook else [],
         "quiet": True,
         "no_warnings": True,
+        # YouTube exige un moteur JavaScript pour lister les formats audio (comme --js-runtimes node du bot)
+        "js_runtimes": {"node": {}},
     }
     if os.environ.get("FFMPEG_LOCATION"):
         opts["ffmpeg_location"] = os.environ["FFMPEG_LOCATION"]
