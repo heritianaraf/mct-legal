@@ -953,8 +953,9 @@ function render() {
   const stations = g?.stations || [];
   renderStations(g, stations);
 
-  if (Date.now() - volTouched > 4000) $('vol').value = listening ? deviceVol : (g?.volume ?? 100);
-  $('voltxt').textContent = (listening ? '🎧 ' : '🔊 ') + $('vol').value + '%';
+  const onDevice = listening && Boolean(g?.discordMuted);
+  if (Date.now() - volTouched > 4000) $('vol').value = onDevice ? deviceVol : (g?.volume ?? 100);
+  $('voltxt').textContent = (onDevice ? '🎧 ' : '🔊 ') + $('vol').value + '%';
   setListenButton();
 
   $('now').textContent = g?.current ? (g.paused ? '⏸ ' : '▶ ') + g.current : 'Rien en lecture';
@@ -1397,7 +1398,7 @@ async function pollSpectrum() {
 
   spectrumBusy = true;
   try {
-    const result = await api('/api/spectrum?guildId=' + encodeURIComponent($('guild').value));
+    const result = await api('/api/spectrum?guildId=' + encodeURIComponent($('guild').value) + (listening ? '&delay=3000' : ''));
     target = result.bands ? result.bands.map(v => v / 255) : new Array(BARS).fill(0);
   } catch {
     target = new Array(BARS).fill(0);
@@ -1477,7 +1478,9 @@ function dropAudio(audio) {
 function setListenButton() {
   const g = data.guilds.find(x => x.id === $('guild').value);
   $('out-device').classList.toggle('on', listening);
-  $('out-discord').classList.toggle('on', !listening && g?.output !== 'device');
+  $('out-discord').classList.toggle('on', !g?.discordMuted);
+  $('out-device').title = listening ? 'Son sur cet appareil : activé (cliquer pour couper)' : 'Activer le son sur cet appareil';
+  $('out-discord').title = g?.discordMuted ? 'Son sur Discord : coupé (cliquer pour activer)' : 'Son sur Discord : activé (cliquer pour couper)';
 }
 
 function openStream() {
@@ -1515,35 +1518,46 @@ function stopListening() {
   setListenButton();
 }
 
+// Deux interrupteurs indépendants : Discord et cet appareil peuvent jouer en même temps.
 $('out-device').onclick = async () => {
-  if (listening) return;
-  if (!$('guild').value) return msg('Choisis d’abord un serveur.', true);
+  const guildId = listening ? listenGuild : $('guild').value;
+  if (!guildId) return msg('Choisis d’abord un serveur.', true);
 
-  listenGuild = $('guild').value;
-  listening = true;
-  $('vol').value = deviceVol;
-  $('voltxt').textContent = '🎧 ' + deviceVol + '%';
-  setListenButton();
-  openStream();
+  if (!listening) {
+    listenGuild = guildId;
+    listening = true;
+    setListenButton();
+    openStream();
+    msg('🎧 Son activé sur cet appareil (environ 3 s de décalage avec Discord).');
+    return;
+  }
+
+  // On coupe l'appareil : si Discord était coupé, on le rétablit pour ne pas tout couper.
+  const g = data.guilds.find(x => x.id === guildId);
+  stopListening();
+  volTouched = 0;
 
   try {
-    await api('/api/control', post({ guildId: listenGuild, action: 'output', value: 'device' }));
-    msg('🎧 Le son est joué sur cet appareil (quelques secondes de décalage). Discord est muet.');
+    if (g?.discordMuted) await api('/api/control', post({ guildId, action: 'output', value: 'discord-on' }));
+    msg('🎧 Son coupé sur cet appareil.');
   } catch (error) {
-    stopListening();
     msg(error.message, true);
   }
   refresh();
 };
 
 $('out-discord').onclick = async () => {
-  const guildId = listenGuild || $('guild').value;
-  stopListening();
-  volTouched = 0;
+  const guildId = $('guild').value;
+  const g = data.guilds.find(x => x.id === guildId);
+  const muted = Boolean(g?.discordMuted);
+
+  // Au moins une sortie doit rester active.
+  if (!muted && !listening) return msg('Active d’abord le son sur cet appareil avant de couper Discord.', true);
 
   try {
-    await api('/api/control', post({ guildId, action: 'output', value: 'discord' }));
-    msg('🔊 Le son est joué sur Discord.');
+    await api('/api/control', post({ guildId, action: 'output', value: muted ? 'discord-on' : 'discord-off' }));
+    msg(muted ? '🔊 Son activé sur Discord.' : '🔇 Son coupé sur Discord.');
+    volTouched = 0;
   } catch (error) {
     msg(error.message, true);
   }
@@ -1564,16 +1578,22 @@ $('loop').onclick = () => {
   });
 });
 
+// Le curseur règle Discord ; quand Discord est coupé, il règle le volume de cet appareil.
+function volOnDevice() {
+  const g = data.guilds.find(x => x.id === $('guild').value);
+  return listening && Boolean(g?.discordMuted);
+}
+
 $('vol').oninput = () => {
   volTouched = Date.now();
-  $('voltxt').textContent = (listening ? '🎧 ' : '🔊 ') + $('vol').value + '%';
+  $('voltxt').textContent = (volOnDevice() ? '🎧 ' : '🔊 ') + $('vol').value + '%';
 };
 
 $('vol').onchange = async () => {
   volTouched = Date.now();
 
   // Son sur cet appareil : le curseur règle le volume local (100 % = maximum de l'appareil)
-  if (listening) {
+  if (volOnDevice()) {
     deviceVol = Number($('vol').value);
     applyDeviceVolume();
     return;
@@ -1590,10 +1610,10 @@ $('vol').onchange = async () => {
 $('guild').onchange = () => {
   volTouched = 0;
   if (listening) {
-    // on change de serveur : le son de l'ancien revient sur Discord
+    // on change de serveur : Discord est rétabli sur l'ancien
     const old = listenGuild;
     stopListening();
-    api('/api/control', post({ guildId: old, action: 'output', value: 'discord' })).catch(() => {});
+    api('/api/control', post({ guildId: old, action: 'output', value: 'discord-on' })).catch(() => {});
   }
   render();
 };

@@ -987,12 +987,17 @@ function probeDuration(file) {
 const hubs = new Map(); // guildId -> { listeners:Set<res>, encoder, lastPcm, timer }
 const MAX_LISTENERS = 10;
 const SILENCE = Buffer.alloc(48000 * 2 * 2 / 10); // 100 ms de silence (s16le 48 kHz stéréo)
+const PRIME_SECONDS = 3;                                  // coussin de sécurité côté navigateur
+const PRIME_BYTES = 48000 * 2 * 2 * PRIME_SECONDS;
+const BURST_BYTES = 16000 * PRIME_SECONDS;                // ~3 s de MP3 (128 kbit/s) pour un auditeur qui arrive
+const MAX_CLIENT_BACKLOG = 256 * 1024;                    // retard toléré par client (~16 s) avant de sauter du flux
+const MAX_PCM_BACKLOG = 1024 * 1024;                      // idem pour l'encodeur (~5 s)
 
 function hubFor(guildId) {
   const id = String(guildId);
   let hub = hubs.get(id);
   if (!hub) {
-    hub = { listeners: new Set(), encoder: null, lastPcm: 0, timer: null };
+    hub = { id, listeners: new Set(), encoder: null, lastPcm: 0, timer: null, since: 0, recent: [], recentBytes: 0 };
     hubs.set(id, hub);
   }
   return hub;
@@ -1013,7 +1018,14 @@ function startEncoder(hub) {
   encoder.stdin.on('error', () => {});
   encoder.stdout.on('data', chunk => {
     for (const res of hub.listeners) {
-      if (!res.writableNeedDrain) res.write(chunk); // client trop lent : on saute ce morceau de flux
+      if (res.writableLength < MAX_CLIENT_BACKLOG) res.write(chunk); // client très en retard : on saute du flux
+    }
+
+    // les dernières secondes de MP3 : envoyées d'un coup à un nouvel auditeur
+    hub.recent.push(chunk);
+    hub.recentBytes += chunk.length;
+    while (hub.recent.length > 1 && hub.recentBytes - hub.recent[0].length >= BURST_BYTES) {
+      hub.recentBytes -= hub.recent.shift().length;
     }
   });
   encoder.on('error', () => { if (hub.encoder === encoder) hub.encoder = null; });
@@ -1021,11 +1033,21 @@ function startEncoder(hub) {
 
   hub.encoder = encoder;
   hub.lastPcm = Date.now();
+  hub.recent = [];
+  hub.recentBytes = 0;
+
+  // Quelques secondes de silence envoyées plus vite que le temps réel : le navigateur démarre avec un
+  // coussin d'avance et supporte les micro-coupures du réseau (au prix de ~3 s de décalage).
+  encoder.stdin.write(Buffer.alloc(PRIME_BYTES));
 
   // Pendant une pause ou entre deux morceaux, on envoie du silence pour garder le flux ouvert.
   clearInterval(hub.timer);
   hub.timer = setInterval(() => {
-    if (hub.encoder === encoder && Date.now() - hub.lastPcm > 500 && encoder.stdin.writable && !encoder.stdin.writableNeedDrain) {
+    // Silence uniquement en pause / à l'arrêt : jamais quand le son est simplement un peu en retard.
+    const status = queues.get(hub.id)?.player.state.status;
+    const quiet = !status || status === AudioPlayerStatus.Idle || status === AudioPlayerStatus.Paused || status === AudioPlayerStatus.AutoPaused;
+
+    if (quiet && hub.encoder === encoder && Date.now() - hub.lastPcm > 300 && encoder.stdin.writable && encoder.stdin.writableLength < MAX_PCM_BACKLOG) {
       encoder.stdin.write(SILENCE);
     }
   }, 100);
@@ -1038,6 +1060,8 @@ function stopEncoder(hub) {
 
   const encoder = hub.encoder;
   hub.encoder = null;
+  hub.recent = [];
+  hub.recentBytes = 0;
   if (encoder) {
     encoder.stdin.destroy();
     encoder.kill();
@@ -1056,7 +1080,7 @@ function makeTap(guildId) {
       if (hub.listeners.size) {
         if (!hub.encoder) startEncoder(hub);
         const encoder = hub.encoder;
-        if (encoder && encoder.stdin.writable && !encoder.stdin.writableNeedDrain) {
+        if (encoder && encoder.stdin.writable && encoder.stdin.writableLength < MAX_PCM_BACKLOG) {
           encoder.stdin.write(chunk);
           hub.lastPcm = Date.now();
         }
@@ -1164,34 +1188,33 @@ function trackPosition(state) {
 }
 
 // ======================================
-// SORTIE DU SON : Discord OU l'appareil qui ouvre le dashboard
-// En mode « appareil », le bot reste connecté mais n'envoie plus de son dans le salon vocal
-// (volume Discord à 0) : le son est diffusé uniquement dans le navigateur (flux /api/listen).
+// SORTIES DU SON : Discord et/ou l'appareil qui ouvre le dashboard (les deux peuvent jouer ensemble)
+// Couper Discord = volume Discord à 0 (le bot reste connecté, la lecture ne s'interrompt pas).
+// L'appareil, lui, reçoit le flux /api/listen dès qu'il l'ouvre, sans toucher à Discord.
 // ======================================
 
-const outputs = new Map(); // guildId -> 'device' (absent = Discord)
+const discordMuted = new Set(); // serveurs dont le son Discord est coupé
 
-const getOutput = guildId => (outputs.get(String(guildId)) === 'device' ? 'device' : 'discord');
-const effectiveVolume = guildId => (getOutput(guildId) === 'device' ? 0 : getVolume(guildId) / 100);
+const effectiveVolume = guildId => (discordMuted.has(String(guildId)) ? 0 : getVolume(guildId) / 100);
 
 function setOutput(guildId, mode) {
   const id = String(guildId);
 
-  if (mode !== 'discord' && mode !== 'device') throw new Error('Sortie inconnue.');
-
-  if (mode === 'device') {
-    outputs.set(id, 'device');
-    hubFor(id).since = Date.now(); // délai de grâce : le navigateur doit se connecter au flux
+  if (mode === 'discord-off') {
+    discordMuted.add(id);
+    hubFor(id).since = Date.now(); // délai de grâce avant le retour automatique sur Discord
+  } else if (mode === 'discord-on') {
+    discordMuted.delete(id);
   } else {
-    outputs.delete(id);
+    throw new Error('Sortie inconnue.');
   }
 
   queues.get(id)?.resource?.volume?.setVolume(effectiveVolume(id));
 }
 
-// Si plus aucun appareil n'écoute depuis 15 s (onglet fermé, réseau coupé), le son revient sur Discord.
+// Discord coupé et plus aucun appareil n'écoute depuis 15 s (onglet fermé, réseau coupé) : Discord est rétabli.
 setInterval(() => {
-  for (const id of [...outputs.keys()]) {
+  for (const id of [...discordMuted]) {
     const hub = hubFor(id);
 
     if (hub.listeners.size) {
@@ -1203,8 +1226,8 @@ setInterval(() => {
 
     if (Date.now() - hub.since > 15000) {
       hub.since = 0;
-      setOutput(id, 'discord');
-      console.log(`🔊 Aucun appareil n'écoute : le son revient sur Discord (${id}).`);
+      setOutput(id, 'discord-on');
+      console.log(`🔊 Aucun appareil n'écoute : le son Discord est rétabli (${id}).`);
     }
   }
 }, 5000).unref?.();
@@ -1527,7 +1550,7 @@ const botApi = {
   },
 
   // Spectre audio du morceau en cours : 32 barres (0-255), alignées sur ce que Discord joue.
-  spectrum(guildId) {
+  spectrum(guildId, delayMs = 0) {
     assertGuild(guildId);
 
     const state = queues.get(String(guildId));
@@ -1537,7 +1560,7 @@ const botApi = {
       return { bands: null };
     }
 
-    const frame = state.tap.analyzer.at(state.resource.playbackDuration || 0);
+    const frame = state.tap.analyzer.at(Math.max(0, (state.resource.playbackDuration || 0) - (Number(delayMs) || 0)));
     return { bands: frame ? Array.from(frame) : null };
   },
 
@@ -1556,6 +1579,8 @@ const botApi = {
     });
     res.flushHeaders();
     req.socket.setNoDelay(true);
+
+    if (hub.encoder) for (const chunk of hub.recent) res.write(chunk);
 
     hub.listeners.add(res);
     startEncoder(hub);
@@ -1601,7 +1626,7 @@ const botApi = {
         channelId: state?.connection?.joinConfig?.channelId || null,
         current: state?.current?.name || null,
         volume: getVolume(guild.id),
-        output: getOutput(guild.id),
+        discordMuted: discordMuted.has(guild.id),
         paused: status === AudioPlayerStatus.Paused || status === AudioPlayerStatus.AutoPaused,
         queue: state ? state.items.map(track => track.name) : [],
         station: state?.station || null,

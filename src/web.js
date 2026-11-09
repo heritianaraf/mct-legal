@@ -109,7 +109,7 @@ function startWeb(bot) {
       if (!isAuthed(req)) throw fail('Non connecté.', 401);
 
       if (url.pathname === '/api/spectrum' && req.method === 'GET') {
-        return send(res, 200, bot.spectrum(url.searchParams.get('guildId')));
+        return send(res, 200, bot.spectrum(url.searchParams.get('guildId'), Math.min(Math.max(Number(url.searchParams.get('delay')) || 0, 0), 10000)));
       }
 
       // Écoute dans le navigateur : flux MP3 en direct (la réponse reste ouverte)
