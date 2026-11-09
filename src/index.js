@@ -3375,6 +3375,20 @@ async function prepareYoutubeMp3(id) {
     return { stored: known.file, title: known.title || 'Vidéo YouTube' };
   }
 
+  // MP3 déjà déposé dans le salon de sauvegarde (ex. par l'outil Python youtube_sync.py)
+  const dropped = youtubeStoredName(id);
+  if (!fs.existsSync(path.join(PLAYLIST_DIR, dropped)) && await restoreStoredFile(dropped)) {
+    const droppedTitle = known?.title || await fetchYoutubeTitle(id).catch(() => 'Vidéo YouTube');
+    patchYoutubeItem(id, { title: droppedTitle, file: dropped, status: 'ok', error: '' });
+    console.log(`✅ YouTube → MP3 (repris du salon) : ${droppedTitle}`);
+    return { stored: dropped, title: droppedTitle };
+  }
+
+  // YOUTUBE_SERVER_DOWNLOAD=0 : le serveur ne télécharge pas lui-même, il attend l'outil Python
+  if (process.env.YOUTUBE_SERVER_DOWNLOAD === '0') {
+    throw new Error('MP3 en attente de l’outil Python (youtube_sync.py).');
+  }
+
   patchYoutubeItem(id, { status: 'downloading', error: '' });
 
   const title = await fetchYoutubeTitle(id);
@@ -3462,15 +3476,29 @@ function addYoutube(guildId, channelId, rawUrl) {
 // Télécharge automatiquement tous les liens de youtube.json dont le MP3 n'est pas sur le serveur
 // (nouveaux liens, téléchargements interrompus, MP3 disparus). Les téléchargements se font un par un.
 // Au démarrage (retryErrors) on réessaie aussi les liens en erreur ; ensuite, seulement les nouveaux.
-function syncYoutube({ retryErrors = false } = {}) {
+async function syncYoutube({ retryErrors = false } = {}) {
   let queued = 0;
 
-  for (const item of loadYoutubeList()) {
-    if (!item.id) continue;
-
+  const pending = loadYoutubeList().filter(item => {
     const stored = item.file && path.join(PLAYLIST_DIR, path.basename(String(item.file)));
-    if (item.status === 'ok' && stored && fs.existsSync(stored)) continue;
-    if (item.status === 'error' && !retryErrors) continue;
+    return item.id && !(item.status === 'ok' && stored && fs.existsSync(stored));
+  });
+  if (!pending.length) return;
+
+  // MP3 déposés dans le salon par l'outil Python : on relit le salon (seulement s'il reste des liens à traiter)
+  let dropped = new Set();
+  try {
+    const channel = BACKUP_CHANNEL_ID ? await backupChannel() : null;
+    if (channel) {
+      await scanFileBackups(channel);
+      dropped = new Set(fileBackups.keys());
+    }
+  } catch (error) {
+    console.error('Lecture des MP3 du salon impossible :', error.message);
+  }
+
+  for (const item of pending) {
+    if (item.status === 'error' && !retryErrors && !dropped.has(youtubeStoredName(item.id))) continue;
     if (youtubeJobs.has(item.id)) continue;
 
     runYoutubeJob(item.id).catch(() => {});
@@ -3478,6 +3506,54 @@ function syncYoutube({ retryErrors = false } = {}) {
   }
 
   if (queued) console.log(`⬇️ youtube.json : ${queued} lien(s) à télécharger.`);
+}
+
+// ======================================
+// OUTIL PYTHON (youtube_sync.py) lancé par le bot : active-le avec YOUTUBE_PYTHON_SYNC=1
+// Il lit youtube.json dans le salon, télécharge les MP3 manquants et les renvoie dans le salon.
+// Dépendances Python installées au build dans ./pylibs (voir requirements.txt).
+// ======================================
+
+let pythonSyncStarted = false;
+
+function startPythonSync() {
+  if (process.env.YOUTUBE_PYTHON_SYNC !== '1' || pythonSyncStarted) return;
+
+  const script = path.join(__dirname, 'youtube_sync.py');
+  if (!fs.existsSync(script)) return console.warn('YOUTUBE_PYTHON_SYNC=1 mais youtube_sync.py est introuvable.');
+
+  pythonSyncStarted = true;
+  const minutes = Math.max(1, Number(process.env.YOUTUBE_PYTHON_MINUTES) || 10);
+  const outDir = path.join(DATA_DIR, 'youtube-python');
+  const pylibs = path.join(__dirname, 'pylibs');
+
+  const launch = python => {
+    const child = spawn(python, [script, '--watch', String(minutes), '--out', outDir, '--delete-after'], {
+      env: {
+        ...process.env,
+        PYTHONPATH: [pylibs, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+        PYTHONUNBUFFERED: '1',
+        FFMPEG_LOCATION: process.env.FFMPEG_LOCATION || ffmpegPath || ''
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    const relay = chunk => String(chunk).split('\n').filter(line => line.trim()).forEach(line => console.log(`[python] ${line}`));
+    child.stdout.on('data', relay);
+    child.stderr.on('data', relay);
+
+    child.on('error', error => {
+      if (error.code === 'ENOENT' && python === 'python3') return launch('python');
+      console.error('Outil Python impossible à lancer :', error.message);
+    });
+
+    child.on('exit', code => {
+      console.error(`Outil Python arrêté (code ${code}), relance dans 60 s.`);
+      setTimeout(() => launch(python), 60000).unref?.();
+    });
+  };
+
+  launch('python3');
 }
 
 // ======================================
@@ -3518,8 +3594,9 @@ client.once(Events.ClientReady, async readyClient => {
   await restoreBackup();
   await restoreYoutubeBackup();
   await restoreMissingFiles();
-  syncYoutube({ retryErrors: true });
-  setInterval(() => syncYoutube(), 10 * 60 * 1000).unref?.();
+  syncYoutube({ retryErrors: true }).catch(() => {});
+  setInterval(() => syncYoutube().catch(() => {}), 10 * 60 * 1000).unref?.();
+  startPythonSync();
   console.log('================================');
   console.log(`🎵 MCT MUSIC connecté : ${readyClient.user.tag}`);
   console.log('✅ Lecture des MP3 joints aux commandes /play activée');
