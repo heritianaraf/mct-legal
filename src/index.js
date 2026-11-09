@@ -10,6 +10,7 @@ const { randomUUID } = crypto;
 const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 
+
 const {
   Client,
   GatewayIntentBits,
