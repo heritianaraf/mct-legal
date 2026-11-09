@@ -2,7 +2,7 @@
 //
 // Variables d'environnement :
 //   ADMIN_MCT_TOKEN     token du bot ADMIN MCT (différent de DISCORD_TOKEN)
-//   ADMIN_MCT_PASSWORD  mot de passe du dashboard (accès THIVALIN)
+//   ADMIN_MCT_PASSWORD  mot de passe du dashboard (accès ADMIN)
 //   ADMIN_DATA_DIR      (facultatif) dossier des données (avertissements, message de bienvenue)
 //   ADMIN_BACKUP_CHANNEL_ID (facultatif) salon Discord privé où welcome.json et warns.json sont sauvegardés
 //                       (sinon BACKUP_CHANNEL_ID, le même salon que les playlists et youtube.json)
