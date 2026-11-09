@@ -208,7 +208,7 @@ function startWeb(bot) {
           if (role === 'visiteur') return { ...guild, channels: [], channelId: null, stations: [], discordMuted: false };
           return guild;
         });
-        return send(res, 200, { role, admin: Boolean(session.admin), online: onlineCounts(), guilds });
+        return send(res, 200, { role, admin: Boolean(session.admin), online: session.admin ? onlineCounts() : undefined, guilds });
       }
 
       if (url.pathname === '/api/play' && req.method === 'POST') {
