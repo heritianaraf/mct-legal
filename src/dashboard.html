@@ -410,6 +410,7 @@ summary {
 }
 
 /* Accès (selon le mot de passe) */
+#app[data-role="thivalin"] #card-dest,
 #app[data-role="thivalin"] #channel,
 #app[data-role="thivalin"] #out-discord,
 #app[data-role="thivalin"] #dract,
@@ -1201,6 +1202,16 @@ async function refresh() {
     setRole(data.role, data.admin);
     show(true);
     render();
+
+    // THIVALIN : pas de son sur Discord, l'écoute sur cet appareil démarre toute seule
+    if (role === 'thivalin' && autoListen && !autoTried && !listening && $('guild').value) {
+      autoTried = true;
+      autoListen = false;
+      listenGuild = $('guild').value;
+      listening = true;
+      setListenButton();
+      openStream();
+    }
   } catch (error) {
     if (error.message.includes('WEB_PASSWORD')) $('lerr').textContent = error.message;
   }
@@ -1643,7 +1654,12 @@ function openStream() {
   audio.play().catch(error => {
     if (error.name === 'NotAllowedError') {
       stopListening();
-      msg('Le navigateur a bloqué la lecture : clique de nouveau sur « Écouter ici ».', true);
+      if (role === 'thivalin') {
+        autoListen = true; // le navigateur exige un geste : le prochain clic relance l'écoute
+        msg('Clique n’importe où dans la page pour activer le son.');
+      } else {
+        msg('Le navigateur a bloqué la lecture : clique de nouveau sur « Écouter ici ».', true);
+      }
     } else {
       retry();
     }
@@ -1834,7 +1850,8 @@ $('stopenadd').onclick = () => {
 
 // Accès (selon le mot de passe saisi) : mct, thivalin ou visiteur
 let role = 'mct';
-let autoListen = true;
+let autoListen = true;   // l'écoute doit (re)démarrer
+let autoTried = false;   // tentative automatique déjà faite pour cet accès
 
 function setRole(next, admin) {
   role = ['mct', 'thivalin', 'visiteur'].includes(next) ? next : 'mct';
@@ -1862,6 +1879,7 @@ document.querySelectorAll('#roles button').forEach(b => {
       if (restoreDiscord) await api('/api/control', post({ guildId, action: 'output', value: 'discord-on' }));
       await api('/api/role', post({ role: next }));
       autoListen = true;
+      autoTried = false;
       msg('');
     } catch (error) {
       msg(error.message, true);
