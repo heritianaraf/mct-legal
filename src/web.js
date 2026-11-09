@@ -3,8 +3,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { createActivity } = require('./activity');
+const { createAdmin } = require('./admin'); // ADMIN MCT : second bot + dashboard sur /admin
 
 function startWeb(bot) {
+  const admin = createAdmin();
+  admin.start();
+  const isAdminPath = pathname => pathname === '/admin' || pathname.startsWith('/admin/');
+
   const PORT = process.env.PORT || 10000;
   // Le mot de passe saisi donne l'accès : MCT (tout), THIVALIN (lecteur personnel, sans Discord), VISITEUR (lecteur MCT limité)
   const PASSWORDS = [
@@ -72,6 +77,8 @@ function startWeb(bot) {
     const url = new URL(req.url, 'http://localhost');
 
     try {
+      if (isAdminPath(url.pathname)) return await admin.handle(req, res, url);
+
       if (await activity.handle(req, res, url)) return;
 
       if (req.method === 'GET' && url.pathname === '/') {
