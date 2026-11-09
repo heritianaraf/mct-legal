@@ -2369,6 +2369,7 @@ async function createStation(guildId, source, customName, rawPassword) {
   const { info, ...item } = built || {};
   all[guildId] = [...list, { name, items: built ? [item] : [], password }];
   saveStations(all);
+  if (built?.type === 'youtube') registerYoutubeLink(extractYoutubeId(built.value));
 
   return { name, info: built ? info : 'playlist vide' };
 }
@@ -2393,6 +2394,7 @@ async function addLinkToStation(guildId, name, source) {
 
   const { info, ...item } = await buildItem(source);
   addStationItem(guildId, station.name, item);
+  if (item.type === 'youtube') registerYoutubeLink(extractYoutubeId(item.value));
   return { station: station.name, label: item.label, info };
 }
 
@@ -2509,6 +2511,7 @@ async function saveTracksToStations(guildId, tracks, stationNames) {
       try {
         if (track.youtubeUrl) {
           addStationItem(guildId, station.name, { type: 'youtube', value: track.youtubeUrl, label });
+          registerYoutubeLink(extractYoutubeId(track.youtubeUrl));
         } else if (track.driveId) {
           addStationItem(guildId, station.name, {
             type: 'drive',
@@ -2553,7 +2556,16 @@ async function enqueueStationItem(state, item, notes) {
     } else if (item.type === 'youtube') {
       const id = extractYoutubeId(item.value);
       if (!id) throw new Error('lien YouTube invalide.');
-      state.items.push({ name: label, youtubeUrl: youtubeUrlFor(id), file: null, ffmpeg: null, deleteOnFinish: true, deleteScheduled: false });
+      // MP3 déjà téléchargé (serveur ou outil Python) : on le lit ; sinon streaming comme avant
+      const known = loadYoutubeList().find(entry => entry.id === id);
+      const mp3 = path.join(PLAYLIST_DIR, youtubeStoredName(id));
+      const hasMp3 = known?.status === 'ok' && (fs.existsSync(mp3) || await restoreStoredFile(youtubeStoredName(id)));
+
+      if (hasMp3) {
+        state.items.push({ name: label, file: mp3, ffmpeg: null, deleteOnFinish: false });
+      } else {
+        state.items.push({ name: label, youtubeUrl: youtubeUrlFor(id), file: null, ffmpeg: null, deleteOnFinish: true, deleteScheduled: false });
+      }
     } else if (item.type === 'file') {
       const file = path.join(PLAYLIST_DIR, path.basename(String(item.value)));
       if (!fs.existsSync(file)) await restoreStoredFile(item.value);
@@ -3471,6 +3483,28 @@ function addYoutube(guildId, channelId, rawUrl) {
   }
 
   return runYoutubeJob(id, { guildId, channelId });
+}
+
+// Playlists : enregistre le lien dans youtube.json et lance son téléchargement MP3
+// (par le serveur, ou par l'outil Python si YOUTUBE_SERVER_DOWNLOAD=0).
+function registerYoutubeLink(id) {
+  if (!id) return;
+
+  const items = loadYoutubeList();
+  if (!items.some(entry => entry.id === id)) {
+    items.push({
+      id,
+      url: youtubeUrlFor(id),
+      title: '',
+      file: null,
+      status: 'pending',
+      error: '',
+      addedAt: new Date().toISOString()
+    });
+    saveYoutubeList(items.slice(-MAX_YOUTUBE_ITEMS));
+  }
+
+  runYoutubeJob(id).catch(() => {});
 }
 
 // Télécharge automatiquement tous les liens de youtube.json dont le MP3 n'est pas sur le serveur
