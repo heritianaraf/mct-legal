@@ -69,6 +69,12 @@ const MAX_UPLOAD_MB = Math.max(1, Number(process.env.MAX_UPLOAD_MB) || 100);
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 const MAX_DRIVE_FOLDER_TRACKS = 100;
 
+// STORAGE_DISCORD_ONLY=1 : le serveur (Render) ne télécharge plus rien depuis YouTube et ne garde pas les MP3.
+// Le salon Discord de sauvegarde (BACKUP_CHANNEL_ID) est le stockage : youtube_sync.py (sur ton ordinateur)
+// y dépose les MP3, le bot ne les récupère que pour les lire puis les supprime du disque.
+const DISCORD_ONLY = process.env.STORAGE_DISCORD_ONLY === '1';
+const DISCORD_ONLY_MSG = 'Mode Discord seul : le MP3 doit être téléchargé par youtube_sync.py (sur ton ordinateur), puis il est lu depuis le salon de sauvegarde.';
+
 const queues = new Map();
 
 // Lecteur personnel (accès THIVALIN) : un état de lecture séparé, sans salon vocal,
@@ -376,6 +382,7 @@ function youtubeErrorMessage(output) {
 async function downloadYoutubeAudio(rawUrl) {
   const id = extractYoutubeId(rawUrl);
   if (!id) throw new Error('Lien YouTube invalide.');
+  if (DISCORD_ONLY) throw new Error(DISCORD_ONLY_MSG);
 
   await ensureYtDlp();
 
@@ -474,6 +481,8 @@ function runYtDlp(args, timeoutMs) {
 async function downloadYoutubeVideo(id) {
   if (!/^[A-Za-z0-9_-]{11}$/.test(String(id || ''))) throw new Error('Lien YouTube invalide.');
 
+  if (DISCORD_ONLY) throw new Error('Mode Discord seul : les vidéos de l’Activité ne sont pas téléchargées sur le serveur.');
+
   const target = path.join(WATCH_DIR, `mctwatch-${id}.mp4`);
   if (fs.existsSync(target)) return target;
 
@@ -526,6 +535,18 @@ async function enqueueYoutube(state, rawUrl) {
   if (!id) throw new Error('Colle le lien d’une vidéo YouTube (youtube.com/watch?v=… ou youtu.be/…).');
 
   const title = await fetchYoutubeTitle(id);
+
+  if (DISCORD_ONLY) {
+    const stored = youtubeStoredName(id);
+
+    if (await restoreStoredFile(stored)) {
+      state.items.push({ name: title, file: path.join(PLAYLIST_DIR, stored), ffmpeg: null, deleteOnFinish: false });
+      return `▶️ ${title} (MP3 du salon Discord) ajouté à la file.`;
+    }
+
+    registerYoutubeLink(id);
+    throw new Error('MP3 pas encore dans le salon Discord : le lien est enregistré, youtube_sync.py va le télécharger, puis tu pourras le lancer.');
+  }
 
   state.items.push({
     name: title,
@@ -2784,6 +2805,8 @@ async function enqueueStationItem(state, item, notes) {
 
       if (hasMp3) {
         state.items.push({ name: label, file: mp3, ffmpeg: null, deleteOnFinish: false });
+      } else if (DISCORD_ONLY) {
+        notes.push(`⏳ ${label} : MP3 pas encore dans le salon Discord (youtube_sync.py doit le télécharger), ignoré pour l’instant.`);
       } else {
         state.items.push({ name: label, youtubeUrl: youtubeUrlFor(id), file: null, ffmpeg: null, deleteOnFinish: true, deleteScheduled: false });
       }
@@ -3251,11 +3274,8 @@ function scheduleBackup() {
         files: [{ attachment: Buffer.from(fs.readFileSync(STATIONS_FILE)), name: BACKUP_NAME }]
       });
 
-      for (const message of await botMessages(channel, 10)) {
-        if (message.id !== sent.id && message.attachments.some(a => a.name === BACKUP_NAME)) {
-          message.delete().catch(() => {});
-        }
-      }
+      // les anciennes sauvegardes restent dans le salon (aucune suppression) ; la plus récente est utilisée
+      void sent;
     } catch (error) {
       console.error('Sauvegarde des playlists impossible :', error.message);
     }
@@ -3448,7 +3468,10 @@ async function restoreMissingFiles() {
   console.log(`✅ MP3 restaurés depuis le salon de sauvegarde : ${restored}/${missing.size}`);
 }
 
+// Rien n'est jamais supprimé du salon de sauvegarde : un MP3 retiré d'une playlist y reste.
 async function deleteFileBackup(stored) {
+  return;
+  // eslint-disable-next-line no-unreachable
   if (!BACKUP_CHANNEL_ID) return;
 
   try {
@@ -3537,11 +3560,8 @@ function scheduleYoutubeBackup() {
         files: [{ attachment: Buffer.from(fs.readFileSync(YOUTUBE_FILE)), name: YOUTUBE_BACKUP_NAME }]
       });
 
-      for (const message of await botMessages(channel, 10)) {
-        if (message.id !== sent.id && message.attachments.some(a => a.name === YOUTUBE_BACKUP_NAME)) {
-          message.delete().catch(() => {});
-        }
-      }
+      // les anciennes sauvegardes restent dans le salon (aucune suppression) ; la plus récente est utilisée
+      void sent;
     } catch (error) {
       console.error('Sauvegarde de youtube.json impossible :', error.message);
     }
@@ -3630,6 +3650,9 @@ async function enqueueStoredMp3(guildId, channelId, stored, title) {
   const file = path.join(PLAYLIST_DIR, path.basename(stored));
 
   return webEnqueue(guildId, channelId, async state => {
+    if (!fs.existsSync(file) && !(await restoreStoredFile(stored))) {
+      throw new Error('MP3 introuvable dans le salon de sauvegarde.');
+    }
     state.items.push({ name: title, file, ffmpeg: null, deleteOnFinish: false });
     return `🎶 ${title} (MP3 YouTube) ${state.current ? 'ajouté à la file.' : 'lancé.'}`;
   });
@@ -3638,6 +3661,23 @@ async function enqueueStoredMp3(guildId, channelId, stored, title) {
 // Télécharge (ou récupère) le MP3 de la vidéo, le stocke dans le salon de sauvegarde et met à jour youtube.json.
 async function prepareYoutubeMp3(id) {
   const known = loadYoutubeList().find(entry => entry.id === id);
+
+  if (DISCORD_ONLY) {
+    const stored = youtubeStoredName(id);
+
+    if (!fileBackups.has(stored)) {
+      const channel = await backupChannel();
+      if (channel) await findFileBackup(channel, stored);
+    }
+
+    if (fileBackups.has(stored)) {
+      const found = known?.title || await fetchYoutubeTitle(id).catch(() => 'Vidéo YouTube');
+      patchYoutubeItem(id, { title: found, file: stored, status: 'ok', error: '' });
+      return { stored, title: found };
+    }
+
+    throw Object.assign(new Error('MP3 en attente de youtube_sync.py (salon Discord).'), { waiting: true });
+  }
 
   // déjà téléchargé : on le réutilise (restauré depuis le salon de sauvegarde si besoin)
   if (known?.status === 'ok' && known.file && await restoreStoredFile(known.file)) {
@@ -3688,6 +3728,10 @@ function runYoutubeJob(id, target = null) {
         try {
           return { ...(await prepareYoutubeMp3(id)), error: null };
         } catch (error) {
+          if (error.waiting) {
+            patchYoutubeItem(id, { status: 'pending', error: '' });
+            return { error };
+          }
           console.error(`YouTube → MP3 impossible (${id}) :`, error.message);
           patchYoutubeItem(id, { status: 'error', error: error.message });
           return { error };
@@ -3772,7 +3816,7 @@ async function syncYoutube({ retryErrors = false } = {}) {
 
   const pending = loadYoutubeList().filter(item => {
     const stored = item.file && path.join(PLAYLIST_DIR, path.basename(String(item.file)));
-    return item.id && !(item.status === 'ok' && stored && fs.existsSync(stored));
+    return item.id && !(item.status === 'ok' && stored && (DISCORD_ONLY || fs.existsSync(stored)));
   });
   if (!pending.length) return;
 
@@ -3808,7 +3852,7 @@ async function syncYoutube({ retryErrors = false } = {}) {
 let pythonSyncStarted = false;
 
 function startPythonSync() {
-  if (process.env.YOUTUBE_PYTHON_SYNC !== '1' || pythonSyncStarted) return;
+  if (DISCORD_ONLY || process.env.YOUTUBE_PYTHON_SYNC !== '1' || pythonSyncStarted) return;
 
   // youtube_sync.py à côté de index.js ou à la racine du dépôt
   const script = [__dirname, path.join(__dirname, '..'), process.cwd()]
@@ -3881,6 +3925,49 @@ function updatePresence() {
 
 
 // ======================================
+// MODE DISCORD SEUL : le disque du serveur n'est qu'un cache temporaire
+// Les MP3 sont restaurés depuis le salon à la demande ; ceux qui ne sont plus utilisés (et dont une copie existe
+// bien dans le salon) sont supprimés au bout de DISCORD_CACHE_MINUTES (30 par défaut).
+// ======================================
+
+async function purgeLocalCache() {
+  if (!DISCORD_ONLY || !BACKUP_CHANNEL_ID) return;
+
+  const inUse = new Set();
+  for (const state of queues.values()) {
+    for (const track of [state.current, ...state.items, ...(state.history || [])]) {
+      if (typeof track?.file === 'string') inUse.add(path.resolve(track.file));
+    }
+  }
+
+  const ttl = Math.max(1, Number(process.env.DISCORD_CACHE_MINUTES) || 30) * 60 * 1000;
+  const old = [];
+
+  for (const name of await fsp.readdir(PLAYLIST_DIR).catch(() => [])) {
+    if (!name.toLowerCase().endsWith('.mp3')) continue;
+    const file = path.join(PLAYLIST_DIR, name);
+    const stat = await fsp.stat(file).catch(() => null);
+    if (stat && Date.now() - stat.mtimeMs > ttl && !inUse.has(path.resolve(file))) old.push(name);
+  }
+
+  if (!old.length) return;
+
+  // on ne supprime que ce dont le salon garde bien une copie
+  if (old.some(name => !fileBackups.has(name))) {
+    const channel = await backupChannel().catch(() => null);
+    if (channel) await scanFileBackups(channel).catch(() => {});
+  }
+
+  let removed = 0;
+  for (const name of old) {
+    if (!fileBackups.has(name)) continue;
+    await fsp.unlink(path.join(PLAYLIST_DIR, name)).then(() => removed++).catch(() => {});
+  }
+
+  if (removed) console.log(`🧹 Cache local : ${removed} MP3 supprimé(s) du serveur (copie gardée dans le salon).`);
+}
+
+// ======================================
 // DÉMARRAGE
 // ======================================
 
@@ -3888,7 +3975,13 @@ client.once(Events.ClientReady, async readyClient => {
   setInterval(updatePresence, 5000);
   await restoreBackup();
   await restoreYoutubeBackup();
-  await restoreMissingFiles();
+  if (DISCORD_ONLY) {
+    if (!BACKUP_CHANNEL_ID) console.warn('⚠️ STORAGE_DISCORD_ONLY=1 sans BACKUP_CHANNEL_ID : aucun stockage disponible.');
+    console.log('☁️ Mode Discord seul : aucun téléchargement YouTube sur le serveur, MP3 gardés dans le salon de sauvegarde.');
+    setInterval(() => purgeLocalCache().catch(() => {}), 10 * 60 * 1000).unref?.();
+  } else {
+    await restoreMissingFiles();
+  }
   syncYoutube({ retryErrors: true }).catch(() => {});
   setInterval(() => syncYoutube().catch(() => {}), 10 * 60 * 1000).unref?.();
   startPythonSync();
