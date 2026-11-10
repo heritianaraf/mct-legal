@@ -788,7 +788,7 @@ button.activity {
         
       
         <div class="row">
-          <input id="drurl" type="text" placeholder="Lien YouTube ou Google Drive (MP3 ou dossier)">
+          <input id="drurl" type="text" placeholder="Lien YouTube, Spotify (morceau, album, playlist) ou Google Drive">
           <button id="dr" class="add">Ajouter</button>
           <button id="dract" class="activity" hidden title="Préparer cette vidéo YouTube dans l'Activité « regarder ensemble »">🎬 Play activité</button>
         </div>
@@ -866,6 +866,20 @@ button.activity {
 
               <ol id="stitems" hidden></ol>
 
+              <div id="stsel" class="stack" hidden>
+                <p class="pl-meta" id="stselcount">Aucun morceau sélectionné</p>
+                <div class="row">
+                  <button id="stselall" class="ghost mini">Tout sélectionner</button>
+                  <button id="stselnone" class="ghost mini">Tout désélectionner</button>
+                  <button id="stselrm" class="del mini" disabled>🗑 Retirer la sélection</button>
+                </div>
+                <div class="row">
+                  <select id="stmoveto" aria-label="Playlist de destination"></select>
+                  <button id="stmove" class="add mini" disabled>➡ Déplacer</button>
+                </div>
+                <input id="stmovepw" type="password" placeholder="Mot de passe de la playlist de destination" autocomplete="off" hidden>
+              </div>
+
               <button id="stopenadd" class="ghost mini" aria-expanded="false">➕ Ajouter des morceaux</button>
               <div id="stadd" class="stack" hidden>
                 <button id="stcur" class="add mini">➕ Ajouter le morceau en cours</button>
@@ -922,6 +936,7 @@ let currentName = null;     // playlist affichée dans le menu glissant
 let lastStation = null;
 let pendingKind = null;     // action qui attend le mot de passe : delete | current | remove
 let pendingIndex = null;    // numéro du morceau à retirer (action « remove »)
+const spick = new Set();    // morceaux cochés dans la playlist affichée (retrait / déplacement multiples)
 async function api(url, opts = {}) {
   const res = await fetch(url, opts);
   const json = await res.json().catch(() => ({}));
@@ -1053,12 +1068,24 @@ function renderStations(g, stations) {
   $('stitems').hidden = !open;
   setEye($('stshow'), open, open ? 'Masquer la liste' : 'Afficher la liste (' + st.count + ')');
 
-  const sig = JSON.stringify(open ? unlocked.items : null);
+  if (!open) spick.clear();
+  for (const i of [...spick]) if (!unlocked || i >= unlocked.items.length) spick.delete(i);
+
+  const sig = JSON.stringify(open ? [unlocked.items, [...spick]] : null);
   if ($('stitems').dataset.sig !== sig) {
     $('stitems').dataset.sig = sig;
     $('stitems').replaceChildren(...(open ? unlocked.items : []).map((item, index) => {
       const li = document.createElement('li');
-      li.append((icons[item.type] || '•') + ' ' + item.label);
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.className = 'spick';
+      box.checked = spick.has(index);
+      box.title = 'Sélectionner ce morceau';
+      box.onchange = () => {
+        box.checked ? spick.add(index) : spick.delete(index);
+        render();
+      };
+      li.append(box, ' ' + (icons[item.type] || '•') + ' ' + item.label);
       const play = document.createElement('button');
       play.className = 'ghost rm';
       play.textContent = '▶';
@@ -1073,6 +1100,19 @@ function renderStations(g, stations) {
       li.append(rm);
       return li;
     }));
+  }
+
+  // barre de sélection : retrait et déplacement de plusieurs morceaux
+  $('stsel').hidden = !open;
+  if (open) {
+    $('stselcount').textContent = spick.size
+      ? spick.size + ' morceau(x) sélectionné(s)'
+      : 'Coche des morceaux pour les retirer ou les déplacer';
+    $('stselrm').disabled = spick.size === 0;
+    fill($('stmoveto'), stations.filter(s => s.name !== st.name).map(s => [s.name, (s.locked ? '🔒 ' : '') + s.name]));
+    const dest = stations.find(s => s.name === $('stmoveto').value);
+    $('stmovepw').hidden = !dest?.locked;
+    $('stmove').disabled = spick.size === 0 || !dest;
   }
 
   $('stcur').disabled = !g?.current;
@@ -1419,6 +1459,32 @@ function runWithPassword(kind, password) {
     });
   }
 
+  if (kind === 'removemany') {
+    const indexes = [...spick];
+    if (!indexes.length) return;
+    if (!confirm('Retirer ' + indexes.length + ' morceau(x) de « ' + name + ' » ?')) return;
+    return act(async () => {
+      const result = await api('/api/station/remove-items', post({ guildId, name, indexes, password }));
+      spick.clear();
+      unlocked = { name, items: (await api('/api/station/items', post({ guildId, name }))).items || [] };
+      return result.message;
+    });
+  }
+
+  if (kind === 'move') {
+    const indexes = [...spick];
+    const to = $('stmoveto').value;
+    if (!indexes.length || !to) return;
+    const passwords = { [name]: password, [to]: $('stmovepw').value };
+    return act(async () => {
+      const result = await api('/api/station/move-items', post({ guildId, from: name, to, indexes, passwords }));
+      spick.clear();
+      $('stmovepw').value = '';
+      unlocked = { name, items: (await api('/api/station/items', post({ guildId, name }))).items || [] };
+      return result.message;
+    });
+  }
+
   if (kind === 'remove') {
     const index = pendingIndex;
     return act(async () => {
@@ -1440,6 +1506,11 @@ $('stshow').onclick = () => {
 };
 
 $('stdel').onclick = () => askPassword('delete', 'Mot de passe pour supprimer');
+$('stselall').onclick = () => { (unlocked?.items || []).forEach((_, i) => spick.add(i)); render(); };
+$('stselnone').onclick = () => { spick.clear(); render(); };
+$('stselrm').onclick = () => askPassword('removemany', 'Mot de passe pour retirer la sélection de');
+$('stmove').onclick = () => askPassword('move', 'Mot de passe de la playlist source pour déplacer depuis');
+$('stmoveto').onchange = () => render();
 $('stcur').onclick = () => askPassword('current', 'Mot de passe pour ajouter le morceau en cours à');
 $('stpwno').onclick = closePrompt;
 

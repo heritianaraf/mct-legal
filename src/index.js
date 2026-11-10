@@ -1553,6 +1553,8 @@ const botApi = {
   // --- Activité « regarder ensemble » ---
   videoDir: WATCH_DIR,
   youtubeId: extractYoutubeId,
+  isSpotify: isSpotifyUrl,
+  queueSpotify: queueSpotifyFromWeb,
   youtubeTitle: fetchYoutubeTitle,
   downloadVideo: downloadYoutubeVideo,
 
@@ -1827,6 +1829,29 @@ const botApi = {
     if (!station) throw new Error('Playlist introuvable.');
     return station.items.map(item => ({ type: item.type, label: item.label }));
   },
+  removeStationItems(guildId, name, indexes, password) {
+    assertGuild(guildId);
+    const station = findStation(String(guildId), name);
+    if (!station) throw new Error('Playlist introuvable.');
+    assertStationPassword(station, password, 'web');
+    const removed = removeStationItems(String(guildId), station.name, indexes);
+    return `🗑️ ${removed.length} morceau(x) retiré(s) de ${station.name}.`;
+  },
+
+  moveStationItems(guildId, from, to, indexes, passwords) {
+    assertGuild(guildId);
+    const source = findStation(String(guildId), from);
+    const target = findStation(String(guildId), to);
+    if (!source || !target) throw new Error('Playlist introuvable.');
+
+    const given = passwords && typeof passwords === 'object' ? passwords : {};
+    assertStationPassword(source, given[source.name], 'web');
+    assertStationPassword(target, given[target.name], 'web');
+
+    const result = moveStationItems(String(guildId), source.name, target.name, indexes);
+    return `✅ ${result.count} morceau(x) déplacé(s) de ${result.from} vers ${result.to}.`;
+  },
+
   removeStationItem(guildId, name, index, password) {
     assertGuild(guildId);
     const station = findStation(String(guildId), name);
@@ -2014,9 +2039,9 @@ client.on(Events.InteractionCreate, async interaction => {
           return interaction.reply({ content: '❌ URL invalide.', ephemeral: true });
         }
 
-        if (parsedUrl.hostname !== 'drive.google.com' && !extractYoutubeId(rawUrl)) {
+        if (parsedUrl.hostname !== 'drive.google.com' && !extractYoutubeId(rawUrl) && !isSpotifyUrl(rawUrl)) {
           return interaction.reply({
-            content: '❌ Pour la lecture par URL, utilise un lien YouTube ou un lien Google Drive public vers un MP3 ou un dossier.',
+            content: '❌ Pour la lecture par URL, utilise un lien YouTube, Spotify ou un lien Google Drive public vers un MP3 ou un dossier.',
             ephemeral: true
           });
         }
@@ -2050,6 +2075,19 @@ client.on(Events.InteractionCreate, async interaction => {
           };
 
         } else if (rawUrl) {
+          if (isSpotifyUrl(rawUrl)) {
+            const resolved = await resolveSpotify(rawUrl);
+            await interaction.editReply(`⏳ Spotify « ${resolved.label} » : ${resolved.tracks.length} morceau(x), ajout à la file en cours…`);
+
+            const summary = await spotifyToQueue(resolved.tracks, async (picks, sum) => {
+              await pushSpotifyPicks(state, picks, sum);
+              startTrack(guildId);
+            });
+
+            await interaction.editReply(`✅ Spotify « ${resolved.label} » : ${describeQueueImport(summary)}.`);
+            return;
+          }
+
           if (extractYoutubeId(rawUrl)) {
             const message = await enqueueYoutube(state, rawUrl);
             await interaction.editReply(message);
@@ -2430,6 +2468,125 @@ function deleteStation(guildId, name) {
     if (item.type === 'file') deleteStoredFile(item.value);
   }
   return station;
+}
+
+// ======================================
+// SPOTIFY → FILE D'ATTENTE
+// Chaque morceau est cherché sur YouTube, puis ajouté à la file avec son MP3 (récupéré dans le salon Discord
+// s'il y est déjà, sinon téléchargé selon le mode du serveur). Les liens sont aussi enregistrés dans youtube.json
+// pour que youtube_sync.py télécharge les MP3 manquants.
+// ======================================
+
+async function spotifyToQueue(tracks, pushPicks) {
+  const summary = { added: 0, waiting: 0, missing: [] };
+
+  for (let i = 0; i < tracks.length; i += SPOTIFY_SEARCH_CONCURRENCY) {
+    const found = await Promise.all(tracks.slice(i, i + SPOTIFY_SEARCH_CONCURRENCY).map(async track => {
+      try {
+        const query = `${track.artist ? track.artist + ' ' : ''}${track.title} audio`;
+        return { track, pick: pickYoutubeResult(await youtubeSearch(query), track) };
+      } catch (error) {
+        return { track, error };
+      }
+    }));
+
+    if (i === 0 && found.every(entry => entry.error)) throw found[0].error;
+
+    const picks = found.filter(entry => entry.pick);
+    for (const entry of found) if (!entry.pick) summary.missing.push(spotifyLabel(entry.track));
+    if (picks.length) await pushPicks(picks, summary);
+  }
+
+  return summary;
+}
+
+async function pushSpotifyPicks(state, picks, summary) {
+  for (const { track, pick } of picks) {
+    registerYoutubeLink(pick.id);
+
+    const notes = [];
+    const before = state.items.length;
+    await enqueueStationItem(state, { type: 'youtube', value: youtubeUrlFor(pick.id), label: spotifyLabel(track).slice(0, 70) }, notes);
+
+    if (state.items.length > before) summary.added++;
+    else summary.waiting++;
+  }
+}
+
+function describeQueueImport(summary) {
+  const parts = [`${summary.added} morceau(x) ajouté(s) à la file`];
+  if (summary.waiting) parts.push(`${summary.waiting} en attente du MP3 (pas encore dans le salon Discord)`);
+  if (summary.missing.length) parts.push(`${summary.missing.length} introuvable(s) sur YouTube`);
+  return parts.join(', ');
+}
+
+// Dashboard : rend la main après quelques secondes, la suite de l'ajout continue en arrière-plan.
+async function queueSpotifyFromWeb(guildId, channelId, rawUrl) {
+  const resolved = await resolveSpotify(rawUrl);
+  let failed = null;
+
+  const job = spotifyToQueue(resolved.tracks, (picks, summary) =>
+    webEnqueue(guildId, channelId, state => pushSpotifyPicks(state, picks, summary))
+  ).then(summary => console.log(`Spotify → file « ${resolved.label} » : ${describeQueueImport(summary)}.`))
+    .catch(error => {
+      failed = error;
+      console.error(`Spotify → file (${resolved.label}) : ${error.message}`);
+    });
+
+  await Promise.race([job, new Promise(resolve => setTimeout(resolve, 12000))]);
+  if (failed) throw failed;
+
+  return `⏳ Spotify « ${resolved.label} » : ${resolved.tracks.length} morceau(x), ajout à la file en cours (ils arrivent au fur et à mesure).`;
+}
+
+// ======================================
+// PLAYLISTS : retirer ou déplacer plusieurs morceaux d'un coup
+// ======================================
+
+function cleanIndexes(indexes, length) {
+  const list = [...new Set((Array.isArray(indexes) ? indexes : []).map(Number))]
+    .filter(i => Number.isInteger(i) && i >= 0 && i < length)
+    .sort((a, b) => a - b);
+
+  if (!list.length) throw new Error('Sélectionne au moins un morceau.');
+  return list;
+}
+
+function removeStationItems(guildId, name, indexes) {
+  let removed = [];
+
+  updateStation(guildId, name, station => {
+    const picks = cleanIndexes(indexes, station.items.length);
+    removed = picks.map(i => station.items[i]);
+    station.items = station.items.filter((_, i) => !picks.includes(i));
+  });
+
+  for (const item of removed) {
+    if (item.type === 'file') deleteStoredFile(item.value);
+  }
+  return removed;
+}
+
+// Déplace des morceaux d'une playlist vers une autre (les fichiers MP3 restent tels quels dans le salon Discord).
+function moveStationItems(guildId, fromName, toName, indexes) {
+  const all = loadStations();
+  const list = all[guildId] || [];
+  const from = list.find(s => sameName(s.name, fromName));
+  const to = list.find(s => sameName(s.name, toName));
+
+  if (!from || !to) throw new Error('Playlist introuvable.');
+  if (from === to) throw new Error('Choisis une autre playlist de destination.');
+
+  const picks = cleanIndexes(indexes, from.items.length);
+  if (to.items.length + picks.length > MAX_STATION_ITEMS) {
+    throw new Error(`Maximum ${MAX_STATION_ITEMS} éléments par playlist : « ${to.name} » ne peut pas en recevoir ${picks.length}.`);
+  }
+
+  to.items.push(...picks.map(i => from.items[i]));
+  from.items = from.items.filter((_, i) => !picks.includes(i));
+  saveStations(all);
+
+  return { count: picks.length, from: from.name, to: to.name };
 }
 
 // ======================================

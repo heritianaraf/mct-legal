@@ -234,6 +234,11 @@ function startWeb(bot) {
           });
         }
 
+        // Lien Spotify (morceau, album, playlist) : chaque titre est cherché sur YouTube puis ajouté à la file
+        if (source === 'url' && bot.isSpotify(value)) {
+          return send(res, 200, { message: await bot.queueSpotify(player, channel, value) });
+        }
+
         return send(res, 200, { message: await bot.play(player, channel, source, value, loop) });
       }
 
@@ -304,6 +309,16 @@ function startWeb(bot) {
       if (url.pathname === '/api/station/remove-item' && req.method === 'POST') {
         const { guildId, name, index, password } = await readJson(req);
         return send(res, 200, { message: bot.removeStationItem(guildOf(guildId), name, index, password) });
+      }
+
+      if (url.pathname === '/api/station/remove-items' && req.method === 'POST') {
+        const { guildId, name, indexes, password } = await readJson(req);
+        return send(res, 200, { message: bot.removeStationItems(guildOf(guildId), name, indexes, password) });
+      }
+
+      if (url.pathname === '/api/station/move-items' && req.method === 'POST') {
+        const { guildId, from, to, indexes, passwords } = await readJson(req);
+        return send(res, 200, { message: bot.moveStationItems(guildOf(guildId), from, to, indexes, passwords) });
       }
 
       if (url.pathname === '/api/station/items' && req.method === 'POST') {

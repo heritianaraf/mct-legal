@@ -21,7 +21,7 @@ const commands = [
     .addStringOption(option =>
       option
         .setName('url')
-        .setDescription('Lien Google Drive vers un MP3 ou un dossier de MP3')
+        .setDescription('Lien Spotify, YouTube ou Google Drive (MP3 ou dossier de MP3)')
         .setRequired(false)
     ),
 
