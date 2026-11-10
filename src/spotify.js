@@ -91,7 +91,8 @@ async function apiGet(url, retry = true) {
 
 const toTrack = item => ({
   title: String(item.name).trim(),
-  artist: String(item.artists?.[0]?.name || '').trim()
+  artist: String(item.artists?.[0]?.name || '').trim(),
+  duration: item.duration_ms ? Math.round(item.duration_ms / 1000) : null // secondes, aide à choisir la bonne vidéo
 });
 
 async function apiTrack(id) {
@@ -222,7 +223,8 @@ async function fetchCollection(type, id) {
     .slice(0, MAX_TRACKS)
     .map(item => ({
       title: String(item.title),
-      artist: String(item.subtitle || '').split(/[,\u00a0]/)[0].trim()
+      artist: String(item.subtitle || '').split(/[,\u00a0]/)[0].trim(),
+      duration: Number(item.duration) > 1000 ? Math.round(Number(item.duration) / 1000) : null
     }));
 
   return {

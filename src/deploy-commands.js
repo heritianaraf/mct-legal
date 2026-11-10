@@ -104,7 +104,7 @@ const commands = [
         .addStringOption(option =>
           option
             .setName('lien')
-            .setDescription('Lien Google Drive (fichier ou dossier)')
+            .setDescription('Lien YouTube, Google Drive (fichier ou dossier) ou Spotify (morceau, album, playlist)')
             .setRequired(false)
         )
     )

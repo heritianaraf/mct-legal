@@ -28,6 +28,7 @@ const {
 
 const { startWeb } = require('./web');
 const { Analyzer } = require('./spectrum');
+const { resolveSpotify } = require('./spotify');
 
 const {
   joinVoiceChannel,
@@ -1756,7 +1757,7 @@ const botApi = {
 
   async addStationLink(guildId, name, source) {
     assertGuild(guildId);
-    const result = await addLinkToStation(String(guildId), name, source);
+    const result = await addLinkToStation(String(guildId), name, source, { background: true });
     return `✅ ${result.label} ajouté à ${result.station} (${result.info}).`;
   },
 
@@ -2342,7 +2343,7 @@ async function buildItem(source) {
     };
   }
 
-  throw new Error('Lien non pris en charge : utilise un lien YouTube ou Google Drive (fichier ou dossier).');
+  throw new Error('Lien non pris en charge : utilise un lien YouTube, Google Drive (fichier ou dossier) ou Spotify.');
 }
 
 // Crée une playlist ; sans lien, elle est créée vide (un nom est alors obligatoire).
@@ -2354,6 +2355,28 @@ async function createStation(guildId, source, customName, rawPassword) {
   if (!link && !wanted) throw new Error('Donne un nom ou un lien pour créer la playlist.');
   if (guildStations(guildId).length >= MAX_STATIONS) {
     throw new Error(`Maximum ${MAX_STATIONS} playlists par serveur. Supprime-en une d’abord.`);
+  }
+
+  if (isSpotifyUrl(link)) {
+    const resolved = await resolveSpotify(link);
+    const spotifyName = wanted || cleanName(resolved.label) || 'Playlist';
+    const stations = loadStations();
+    const existing = stations[guildId] || [];
+
+    if (existing.some(s => sameName(s.name, spotifyName))) {
+      throw new Error(`Une playlist s’appelle déjà « ${spotifyName} ». Choisis un autre nom.`);
+    }
+
+    stations[guildId] = [...existing, { name: spotifyName, items: [], password }];
+    saveStations(stations);
+
+    importSpotifyTracks(guildId, spotifyName, resolved.tracks)
+      .catch(error => console.error(`Import Spotify (${spotifyName}) : ${error.message}`));
+
+    return {
+      name: spotifyName,
+      info: `import Spotify de ${resolved.tracks.length} morceau(x) lancé : ils apparaissent au fur et à mesure`
+    };
   }
 
   const built = link ? await buildItem(link) : null;
@@ -2388,9 +2411,197 @@ function deleteStation(guildId, name) {
   return station;
 }
 
-async function addLinkToStation(guildId, name, source) {
+// ======================================
+// SPOTIFY → YOUTUBE → PLAYLIST
+// ======================================
+// Un lien Spotify (morceau, album, playlist) est lu pour récupérer titres et artistes (jamais l'audio).
+// Chaque morceau est cherché sur YouTube avec yt-dlp ; la vidéo trouvée est ajoutée à la playlist comme un
+// lien YouTube normal : registerYoutubeLink() l'inscrit dans youtube.json et le téléchargement MP3 se fait
+// avec le circuit habituel (serveur ou youtube_sync.py). Le morceau est lisible tout de suite (streaming).
+
+const SPOTIFY_SEARCH_CONCURRENCY = 3;
+const SPOTIFY_BAD_WORDS = /\b(live|cover|karaoke|instrumental|reaction|remix|slowed|sped up|nightcore|8d|tutorial)\b/i;
+const spotifyImports = new Set(); // "serveur:playlist" : un seul import à la fois par playlist
+
+function isSpotifyUrl(raw) {
+  try {
+    return new URL(String(raw || '').trim()).hostname === 'open.spotify.com';
+  } catch {
+    return false;
+  }
+}
+
+// Premiers résultats YouTube pour une requête : [{ id, duration (s), title }]
+async function youtubeSearch(query) {
+  await ensureYtDlp();
+
+  const args = [
+    '--no-warnings', '--no-progress', '--flat-playlist',
+    '--js-runtimes', 'node',
+    '--print', '%(id)s\t%(duration)s\t%(title)s'
+  ];
+
+  if (process.env.YOUTUBE_COOKIES) {
+    fs.writeFileSync(YTDLP_COOKIES, process.env.YOUTUBE_COOKIES.replace(/\\n/g, '\n'), { mode: 0o600 });
+    args.push('--cookies', YTDLP_COOKIES);
+  }
+
+  args.push(`ytsearch5:${query}`);
+
+  const { code, out, err } = await new Promise((resolve, reject) => {
+    const child = spawn(YTDLP_PATH, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    const timer = setTimeout(() => child.kill('SIGKILL'), 60 * 1000);
+
+    child.stdout.on('data', chunk => { out += chunk; });
+    child.stderr.on('data', chunk => { err = (err + chunk).slice(-4000); });
+    child.on('error', error => {
+      clearTimeout(timer);
+      reject(new Error(`yt-dlp : ${error.message}`));
+    });
+    child.on('close', exitCode => {
+      clearTimeout(timer);
+      resolve({ code: exitCode, out, err });
+    });
+  });
+
+  if (code !== 0 && !out.trim()) throw new Error(youtubeErrorMessage(err));
+
+  return out.split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      const [id, duration, ...title] = line.split('\t');
+      return { id, duration: Number(duration) || null, title: title.join('\t') };
+    })
+    .filter(result => /^[A-Za-z0-9_-]{11}$/.test(result.id));
+}
+
+// Choisit la vidéo la plus plausible : évite lives, covers, remix… et privilégie la durée de Spotify.
+function pickYoutubeResult(results, track) {
+  const wanted = `${track.title} ${track.artist}`;
+  const clean = results.filter(result =>
+    (!result.duration || result.duration <= 15 * 60) &&
+    (SPOTIFY_BAD_WORDS.test(wanted) || !SPOTIFY_BAD_WORDS.test(result.title))
+  );
+  const pool = clean.length ? clean : results;
+
+  if (track.duration) {
+    const tolerance = Math.max(10, track.duration * 0.08);
+    const close = pool.find(result => result.duration && Math.abs(result.duration - track.duration) <= tolerance);
+    if (close) return close;
+  }
+
+  return pool[0] || null;
+}
+
+const spotifyLabel = track => (track.artist ? `${track.artist} - ${track.title}` : track.title);
+
+// Cherche chaque morceau sur YouTube et l'ajoute à la playlist (dans l'ordre de Spotify).
+async function importSpotifyTracks(guildId, stationName, tracks, onProgress) {
+  const key = `${guildId}:${String(stationName).toLowerCase()}`;
+  if (spotifyImports.has(key)) throw new Error('Un import Spotify est déjà en cours pour cette playlist.');
+  spotifyImports.add(key);
+
+  const result = { added: 0, duplicates: 0, missing: [], full: false };
+
+  try {
+    for (let i = 0; i < tracks.length && !result.full; i += SPOTIFY_SEARCH_CONCURRENCY) {
+      const chunk = tracks.slice(i, i + SPOTIFY_SEARCH_CONCURRENCY);
+
+      const found = await Promise.all(chunk.map(async track => {
+        try {
+          const query = `${track.artist ? track.artist + ' ' : ''}${track.title} audio`;
+          return { track, pick: pickYoutubeResult(await youtubeSearch(query), track) };
+        } catch (error) {
+          return { track, error };
+        }
+      }));
+
+      // YouTube bloque le serveur (ou yt-dlp indisponible) : inutile de continuer
+      if (i === 0 && found.every(entry => entry.error)) throw found[0].error;
+
+      for (const { track, pick } of found) {
+        if (!pick) {
+          result.missing.push(spotifyLabel(track));
+          continue;
+        }
+
+        const station = findStation(guildId, stationName);
+        if (!station) throw new Error('La playlist a été supprimée pendant l’import.');
+
+        if (station.items.some(item => item.type === 'youtube' && extractYoutubeId(item.value) === pick.id)) {
+          result.duplicates++;
+          continue;
+        }
+
+        try {
+          addStationItem(guildId, station.name, {
+            type: 'youtube',
+            value: youtubeUrlFor(pick.id),
+            label: spotifyLabel(track).slice(0, 70)
+          });
+        } catch (error) {
+          if (/Maximum/.test(error.message)) {
+            result.full = true;
+            result.missing.push(spotifyLabel(track));
+            break;
+          }
+          throw error;
+        }
+
+        registerYoutubeLink(pick.id);
+        result.added++;
+      }
+
+      onProgress?.(Math.min(i + SPOTIFY_SEARCH_CONCURRENCY, tracks.length), tracks.length);
+    }
+  } finally {
+    spotifyImports.delete(key);
+  }
+
+  return result;
+}
+
+function describeSpotifyImport(result) {
+  const parts = [`${result.added} morceau(x) ajouté(s)`];
+  if (result.duplicates) parts.push(`${result.duplicates} déjà présent(s)`);
+  if (result.missing.length) {
+    const sample = result.missing.slice(0, 5).join(', ');
+    const more = result.missing.length > 5 ? '…' : '';
+    parts.push(`${result.missing.length} introuvable(s) sur YouTube : ${sample}${more}`);
+  }
+  if (result.full) parts.push(`playlist pleine (${MAX_STATION_ITEMS} max)`);
+  return `${parts.join(', ')}. Téléchargement MP3 en cours en arrière-plan`;
+}
+
+// background : true → on rend la main tout de suite (dashboard) ; sinon on attend la fin (commande Discord).
+async function addSpotifyToStation(guildId, stationName, rawUrl, { background = false, onProgress } = {}) {
+  const station = findStation(guildId, stationName);
+  if (!station) throw new Error('Playlist introuvable.');
+
+  const resolved = await resolveSpotify(rawUrl);
+  const total = resolved.tracks.length;
+  const run = importSpotifyTracks(guildId, station.name, resolved.tracks, onProgress);
+
+  if (background) {
+    run.catch(error => console.error(`Import Spotify (${station.name}) : ${error.message}`));
+    return {
+      station: station.name,
+      label: resolved.label,
+      info: `import Spotify de ${total} morceau(x) lancé : ils apparaissent dans la playlist au fur et à mesure`
+    };
+  }
+
+  return { station: station.name, label: resolved.label, info: describeSpotifyImport(await run) };
+}
+
+async function addLinkToStation(guildId, name, source, options = {}) {
   const station = findStation(guildId, name);
   if (!station) throw new Error('Playlist introuvable.');
+
+  if (isSpotifyUrl(source)) return addSpotifyToStation(guildId, station.name, source, options);
 
   const { info, ...item } = await buildItem(source);
   addStationItem(guildId, station.name, item);
@@ -2771,9 +2982,17 @@ client.on(Events.InteractionCreate, async interaction => {
         throw new Error('Playlist introuvable. Crée-la d’abord avec /station creer.');
       }
 
+      let addProgressAt = 0;
       const result = attachment
         ? await addFileToStation(guildId, station.name, await downloadDiscordMp3(attachment), attachment.name)
-        : await addLinkToStation(guildId, station.name, link);
+        : await addLinkToStation(guildId, station.name, link, {
+          onProgress: (done, total) => {
+            const now = Date.now();
+            if (done < total && now - (addProgressAt || 0) < 4000) return;
+            addProgressAt = now;
+            interaction.editReply(`⏳ Import Spotify : ${done}/${total} morceaux traités…`).catch(() => {});
+          }
+        });
 
       return interaction.editReply(
         `✅ **${result.label}** ajouté à **${station.name}** : ${result.info}.`
