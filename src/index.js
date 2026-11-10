@@ -2558,8 +2558,18 @@ async function enqueueStationItem(state, item, notes) {
       if (!id) throw new Error('lien YouTube invalide.');
       // MP3 déjà téléchargé (serveur ou outil Python) : on le lit ; sinon streaming comme avant
       const known = loadYoutubeList().find(entry => entry.id === id);
-      const mp3 = path.join(PLAYLIST_DIR, youtubeStoredName(id));
-      const hasMp3 = known?.status === 'ok' && (fs.existsSync(mp3) || await restoreStoredFile(youtubeStoredName(id)));
+      const stored = youtubeStoredName(id);
+      const mp3 = path.join(PLAYLIST_DIR, stored);
+      let hasMp3 = false;
+
+      if (known?.status === 'ok') {
+        hasMp3 = fs.existsSync(mp3) || await restoreStoredFile(stored);
+      } else if (known && !fs.existsSync(mp3) && Date.now() - (youtubeChannelMiss.get(id) || 0) > 5 * 60 * 1000) {
+        // MP3 peut-être déjà déposé dans le salon par l'outil Python, avant la prochaine synchronisation
+        hasMp3 = await restoreStoredFile(stored);
+        if (hasMp3) patchYoutubeItem(id, { file: stored, status: 'ok', error: '' });
+        else youtubeChannelMiss.set(id, Date.now());
+      }
 
       if (hasMp3) {
         state.items.push({ name: label, file: mp3, ffmpeg: null, deleteOnFinish: false });
@@ -3107,6 +3117,27 @@ function scanFileBackups(channel) {
   return pendingScan;
 }
 
+// Cherche UN MP3 dans le salon (du plus récent au plus ancien) et s'arrête dès qu'il est trouvé :
+// les MP3 déposés récemment sont en haut du salon, inutile de relire tout l'historique.
+async function findFileBackup(channel, stored, maxPages = 60) {
+  let before;
+
+  for (let i = 0; i < maxPages; i++) {
+    const page = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
+    if (!page.size) return;
+
+    for (const message of page.values()) {
+      if (message.author.id !== client.user.id || !message.content.startsWith(FILE_TAG)) continue;
+      const name = message.content.slice(FILE_TAG.length).trim();
+      const attachment = message.attachments.first();
+      if (name && attachment) fileBackups.set(name, { id: message.id, url: attachment.url });
+    }
+
+    if (fileBackups.has(stored) || page.size < 100) return;
+    before = page.last().id;
+  }
+}
+
 async function backupStoredFile(stored) {
   if (!BACKUP_CHANNEL_ID) return true;
 
@@ -3142,7 +3173,8 @@ async function restoreStoredFile(name) {
       // 1re tentative : adresse connue ; 2e : on relit le salon (les adresses Discord expirent)
       if (attempt === 1 || !fileBackups.has(stored)) {
         fileBackups.delete(stored);
-        await scanFileBackups(channel);
+        if (attempt === 0) await findFileBackup(channel, stored);
+        else await scanFileBackups(channel);
       }
 
       const entry = fileBackups.get(stored);
@@ -3185,6 +3217,11 @@ async function restoreMissingFiles() {
 
   if (!missing.size) return;
 
+  if (missing.size > 1) {
+    const channel = await backupChannel().catch(() => null);
+    if (channel) await scanFileBackups(channel).catch(() => {});
+  }
+
   let restored = 0;
   for (const name of missing) {
     if (await restoreStoredFile(name)) restored++;
@@ -3222,6 +3259,7 @@ const MAX_YOUTUBE_ITEMS = 500;
 let youtubeBackupTimer = null;
 let youtubeChain = Promise.resolve();   // un seul téléchargement à la fois
 const youtubeJobs = new Map();          // identifiant -> téléchargement en cours / en attente
+const youtubeChannelMiss = new Map();   // identifiant -> dernière recherche sans résultat dans le salon
 
 const youtubeStoredName = id => `yt-${id}.mp3`;
 
