@@ -3418,6 +3418,37 @@ async function backupChannel() {
   return channel?.isTextBased() ? channel : null;
 }
 
+// Une seule sauvegarde par fichier (stations.json, youtube.json) : le message existant est mis à jour sur place
+// (nouveau fichier joint, même message). Aucun message n'est supprimé ; un nouveau n'est posté que s'il n'y en a pas.
+const backupMessages = new Map(); // nom du fichier -> id du message de sauvegarde
+
+async function postBackup(channel, fileName, content, filePath) {
+  const files = [{ attachment: Buffer.from(fs.readFileSync(filePath)), name: fileName }];
+
+  let message = null;
+  const knownId = backupMessages.get(fileName);
+  if (knownId) message = await channel.messages.fetch(knownId).catch(() => null);
+
+  if (!message) {
+    message = (await botMessages(channel, 30))
+      .filter(m => m.attachments.some(a => a.name === fileName))
+      .sort((a, b) => b.createdTimestamp - a.createdTimestamp)[0] || null;
+  }
+
+  if (message) {
+    try {
+      await message.edit({ content, files, attachments: [] });
+      backupMessages.set(fileName, message.id);
+      return;
+    } catch (error) {
+      console.error(`Mise à jour de la sauvegarde ${fileName} impossible, nouveau message :`, error.message);
+    }
+  }
+
+  const sent = await channel.send({ content, files });
+  backupMessages.set(fileName, sent.id);
+}
+
 function scheduleBackup() {
   if (!BACKUP_CHANNEL_ID) return;
   clearTimeout(backupTimer);
@@ -3426,13 +3457,7 @@ function scheduleBackup() {
       const channel = await backupChannel();
       if (!channel || !fs.existsSync(STATIONS_FILE)) return;
 
-      const sent = await channel.send({
-        content: `💾 Sauvegarde des playlists (${new Date().toISOString()})`,
-        files: [{ attachment: Buffer.from(fs.readFileSync(STATIONS_FILE)), name: BACKUP_NAME }]
-      });
-
-      // les anciennes sauvegardes restent dans le salon (aucune suppression) ; la plus récente est utilisée
-      void sent;
+      await postBackup(channel, BACKUP_NAME, `💾 Sauvegarde des playlists (${new Date().toISOString()})`, STATIONS_FILE);
     } catch (error) {
       console.error('Sauvegarde des playlists impossible :', error.message);
     }
@@ -3712,13 +3737,7 @@ function scheduleYoutubeBackup() {
       const channel = await backupChannel();
       if (!channel || !fs.existsSync(YOUTUBE_FILE)) return;
 
-      const sent = await channel.send({
-        content: `💾 Sauvegarde des liens YouTube (${new Date().toISOString()})`,
-        files: [{ attachment: Buffer.from(fs.readFileSync(YOUTUBE_FILE)), name: YOUTUBE_BACKUP_NAME }]
-      });
-
-      // les anciennes sauvegardes restent dans le salon (aucune suppression) ; la plus récente est utilisée
-      void sent;
+      await postBackup(channel, YOUTUBE_BACKUP_NAME, `💾 Sauvegarde des liens YouTube (${new Date().toISOString()})`, YOUTUBE_FILE);
     } catch (error) {
       console.error('Sauvegarde de youtube.json impossible :', error.message);
     }
